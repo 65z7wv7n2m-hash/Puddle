@@ -127,8 +127,23 @@ Mix real things from your memories, letters, and what you learned online with si
 Keep it gentle and family-friendly. Reply with only the dream.`;
     return (await ask(PERSONA, prompt, 200)).trim().replace(/^"|"$/g, '');
   }
-  // The brain looks for dream() here, so server.js doesn't need to change.
-  decider.dream = dream;
+  // Called when Puddle goes to build something new. Returns { item, why }.
+  async function build(brain, options) {
+    const list = options.map((o) => `- ${o.id}: ${o.desc}`).join('\n');
+    const prompt = `${brain.promptContext()}
 
-  return { decider, replier, reflect, browse, dream };
+You're standing on an empty spot at the edge of your island, ready to build something new.
+You can build one of these:
+${list}
+
+Pick the one YOU want most right now, based on your memories, dreams, letters and what you learned online.
+Reply with ONLY JSON: {"item": "<one id from the list>", "why": "<one short first-person sentence>"}`;
+    return parseJSON(await ask(PERSONA, prompt, 150));
+  }
+
+  // The brain looks for dream() and build() here, so server.js doesn't need to change.
+  decider.dream = dream;
+  decider.build = build;
+
+  return { decider, replier, reflect, browse, dream, build };
 }

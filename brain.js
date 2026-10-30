@@ -17,7 +17,29 @@ export const PLACES = {
 };
 export const POND = { x: 2, z: 1, r: 3.6 };
 export const HOUSE = { x: -6, z: -4.2, r: 2.0 };
-export const ISLAND_R = 10.5;
+export const ISLAND_R = 15.5;
+export const WORLD_R = 20; // the island got bigger: the outer ring is where Puddle builds
+
+// Things Puddle can build, one at a time, on the empty land around the edge of his island.
+export const BUILD_ITEMS = {
+  garden:     { label: 'flower garden',  desc: 'a little garden full of flowers' },
+  bench:      { label: 'bench',          desc: 'a wooden bench for resting and for visitors' },
+  lantern:    { label: 'lantern',        desc: 'a lantern that glows at night' },
+  birdhouse:  { label: 'birdhouse',      desc: 'a birdhouse on a pole, for feathered neighbors' },
+  telescope:  { label: 'telescope',      desc: 'a telescope for looking at the stars' },
+  stage:      { label: 'singing stage',  desc: 'a tiny stage with a spotlight for concerts' },
+  bughotel:   { label: 'bug hotel',      desc: 'a cozy bug hotel (bugs check in, and some never check out)' },
+  library:    { label: 'tiny library',   desc: 'a little library box for things learned online' },
+  fountain:   { label: 'fountain',       desc: 'a splashing stone fountain' },
+  swing:      { label: 'swing',          desc: 'a swing hanging from a wooden frame' },
+  windmill:   { label: 'windmill',       desc: 'a little windmill that spins in the breeze' },
+  mushrooms:  { label: 'mushroom ring',  desc: 'a magical ring of glowing mushrooms' },
+};
+// 12 building spots in a ring around the old island.
+export const PLOTS = Array.from({ length: 12 }, (_, i) => {
+  const a = (i / 12) * Math.PI * 2 + Math.PI / 12, r = 13.8;
+  return { id: i, x: +(Math.cos(a) * r).toFixed(2), z: +(Math.sin(a) * r).toFixed(2), rot: +(Math.atan2(-Math.cos(a), -Math.sin(a))).toFixed(3) };
+});
 
 export const NEEDS = ['hunger', 'energy', 'fun', 'social', 'moisture'];
 export const NEED_LABELS = { hunger: 'Full', energy: 'Energy', fun: 'Fun', social: 'Social', moisture: 'Moisture' };
@@ -36,6 +58,7 @@ export const ACTIONS = {
   gaze:    { place: 'rock',     jitter: 0,   dur: 26, anim: 'sit',    fx: { fun: 12, energy: 6 },                verb: 'watching the sky',       desc: 'Sit on the lookout rock and watch clouds (or stars at night).' },
   mail:    { place: 'mailbox',  jitter: 0,   dur: 16, anim: 'read',   fx: { social: 30, fun: 4 },                verb: 'reading his mail',       desc: 'Go to the mailbox, read letters from visitors and reply.' },
   dance:   { place: 'clearing', jitter: 0.6, dur: 20, anim: 'dance',  fx: { fun: 28, moisture: 20, social: 5 },  verb: 'dancing in the rain',    desc: 'Rain dance in the clearing. Only possible while it is raining.' },
+  build:   { place: 'plot',     jitter: 0,   dur: 40, anim: 'build',  fx: { fun: 30, energy: -12, hunger: -4 },  verb: 'building something',     desc: 'Build something new on the empty land around the edge of your island.' },
   browse:  { place: 'log',      jitter: 0,   dur: 30, anim: 'read',   fx: { fun: 22, social: 4 },                verb: 'browsing the internet',  desc: 'Sit on the mossy log and look something up on the internet.' },
 };
 
@@ -53,6 +76,7 @@ const THOUGHTS = {
   mail:    ['Ooh, I think I have mail!', 'Someone wrote to me? Going to check!'],
   mailNone:['Maybe someone left me a letter...', 'I will go say hi to whoever is watching.'],
   dance:   ['RAIN! Rain dance time!!', 'Raindrops on my skin. Best day ever. Dancing!'],
+  build:   ['I have an idea for something to build!', 'Time to make the island even better.', 'My webbed hands want to build something.'],
   browse:  ['I just thought of a question. To the internet!', 'I wonder... I bet the internet knows.', 'Feeling curious. Time to look something up.'],
 };
 
@@ -80,7 +104,7 @@ function routeAround(from, to) {
 }
 
 export class Brain {
-  constructor({ saved = null, decider = null, replier = null, browser = null, browseEveryHours = 3, dreamer = null, dreamEveryMinutes = 30, realClock = false } = {}) {
+  constructor({ saved = null, decider = null, replier = null, browser = null, browseEveryHours = 3, dreamer = null, dreamEveryMinutes = 30, builder = null, buildEveryMinutes = 60, realClock = false } = {}) {
     this.decider = decider;   // optional async (brain) => { action, thought, say }
     this.replier = replier;   // optional async (brain, letters) => [reply, ...]
     this.browser = browser;   // optional async (brain) => { topic, learned, say }
@@ -88,6 +112,9 @@ export class Brain {
     // Dreams: written by Claude if available (llm.js hangs a dream() function on the decider), else made up from memories.
     this.dreamer = dreamer || decider?.dream || null;
     this.dreamEveryMs = dreamEveryMinutes * 60 * 1000;
+    // Building: Claude picks what to build (llm.js hangs build() on the decider), otherwise he picks himself.
+    this.builder = builder || decider?.build || null;
+    this.buildEveryMs = buildEveryMinutes * 60 * 1000;
     this.realClock = realClock;
     this.pending = false;
     this.listeners = {};
@@ -97,6 +124,8 @@ export class Brain {
     if (!this.s.discoveries.length) this.s.lastBrowseAt = 0; // never learned anything yet? go browse soon
     this.s.dreams ||= [];
     this.s.lastDreamAt ??= 0;
+    this.s.structures ||= [];
+    this.s.lastBuildAt ??= 0;
     const f = this.s.frog;
     if (!['travel', 'doing'].includes(f.phase) || !ACTIONS[f.action]) { f.phase = 'thinking'; f.timer = 2; }
   }
@@ -114,7 +143,7 @@ export class Brain {
       },
       lastAction: null, memories: [{ day: 1, time: '08:00', text: 'I woke up on my little island. Hello, world!' }],
       diary: [], friends: {}, mailbox: [], replies: [], letterId: 0, visitSeq: 0, lastVisit: null,
-      discoveries: [], lastBrowseAt: 0, dreams: [], lastDreamAt: 0,
+      discoveries: [], lastBrowseAt: 0, dreams: [], lastDreamAt: 0, structures: [], lastBuildAt: 0,
       stats: { bugsEaten: 0, swims: 0, songs: 0, lettersRead: 0, naps: 0 },
     };
   }
@@ -235,9 +264,19 @@ export class Brain {
   }
 
   // ---------- deciding ----------
+  unfinished() { return this.s.structures.find((x) => x.progress < 1) || null; }
+  freePlot() {
+    const used = new Set(this.s.structures.map((x) => x.plot));
+    const free = PLOTS.filter((p) => !used.has(p.id));
+    return free.length ? pick(free) : null;
+  }
+  canBuild() {
+    if (this.unfinished()) return true; // always allowed to go finish a half-built thing
+    return !!this.freePlot() && Date.now() - (this.s.lastBuildAt || 0) >= this.buildEveryMs && !this.isNight();
+  }
   browseDue() { return !!this.browser && Date.now() - (this.s.lastBrowseAt || 0) >= this.browseEveryMs; }
   allowedActions() {
-    return Object.keys(ACTIONS).filter((k) => (k !== 'dance' || this.s.weather === 'rain') && (k !== 'browse' || this.browseDue()));
+    return Object.keys(ACTIONS).filter((k) => (k !== 'dance' || this.s.weather === 'rain') && (k !== 'browse' || this.browseDue()) && (k !== 'build' || this.canBuild()));
   }
 
   scores() {
@@ -253,6 +292,7 @@ export class Brain {
       gaze: w('fun') * 0.55 + (night ? 0.35 : 0.06),
       mail: w('social') * 1.0 + (s.mailbox.length ? 0.9 : 0),
       dance: s.weather === 'rain' ? 0.55 + w('fun') * 0.6 : -9,
+      build: this.canBuild() ? w('fun') * 0.8 + (n.energy > 40 ? 0.3 : -0.3) + (this.unfinished() ? 0.3 : 0) : -9,
     };
     if (s.lastAction && sc[s.lastAction] != null) sc[s.lastAction] -= 0.3;
     for (const k in sc) sc[k] += Math.random() * 0.22; // a little personality / randomness
@@ -302,6 +342,13 @@ export class Brain {
     f.thought = clean(thought || this.makeThought(name), 160);
     let p;
     if (a.place === 'random') { p = this.randomSpot(); f.placeLabel = 'somewhere new'; }
+    else if (a.place === 'plot') {
+      const half = this.unfinished(), plot = half ? PLOTS[half.plot] : this.freePlot() || PLOTS[0];
+      f.buildPlot = plot.id; f.buildId = half ? half.id : null;
+      const k = (plot.x * plot.x + plot.z * plot.z) ** 0.5, back = 1.3; // stand on the island side of the plot
+      p = { x: plot.x - (plot.x / k) * back, z: plot.z - (plot.z / k) * back };
+      f.placeLabel = half ? `his half-built ${half.label}` : 'the edge of the island';
+    }
     else { const b = PLACES[a.place]; p = { x: b.x + rnd(-a.jitter, a.jitter), z: b.z + rnd(-a.jitter, a.jitter) }; f.placeLabel = b.label; }
     this.goTo(p);
     s.lastAction = name;
@@ -324,6 +371,7 @@ export class Brain {
     const f = this.s.frog, a = f.action, asleepSoon = a === 'nap';
     if (a === 'mail') return this.readMail();
     if (a === 'browse') return this.browse();
+    if (a === 'build') return this.beginBuild();
     if (asleepSoon) { this.s.stats.naps++; this.maybeDream(); return; }
     if (Math.random() < 0.55) {
       const lines = {
@@ -348,6 +396,9 @@ export class Brain {
       f.wanderT -= dt;
       if (f.wanderT <= 0 && !f.path.length) { this.goTo(this.randomSpot(f, 3.5)); f.wanderT = rnd(3, 6); }
       this.moveAlong(dt, 1.3);
+    } else if (f.action === 'build') {
+      const st = s.structures.find((x) => x.id === f.buildId);
+      if (st) st.progress = Math.min(0.99, st.progress + dt / ACTIONS.build.dur);
     } else if (f.action === 'swim') {
       f.wanderT -= dt;
       if (f.wanderT <= 0 && !f.path.length) {
@@ -371,12 +422,52 @@ export class Brain {
       mail: null,
       dance: 'Danced in the rain!',
       browse: null,
+      build: null,
     }[a];
+    if (a === 'build') this.finishBuild();
     if (a === 'swim') s.stats.swims++;
     if (a === 'sing') s.stats.songs++;
     if (mem) this.remember(mem);
     if (a === 'nap') this.wakeUp();
     f.phase = 'thinking'; f.timer = rnd(1.5, 3.5); f.path = []; f.moving = false;
+  }
+
+  // ---------- building ----------
+  beginBuild() {
+    const s = this.s, f = s.frog, plot = PLOTS[f.buildPlot];
+    f.face = Math.atan2(plot.x - f.x, plot.z - f.z);
+    const existing = s.structures.find((x) => x.id === f.buildId);
+    if (existing) { this.say(pick([`Back to work on my ${existing.label}!`, `Time to finish my ${existing.label}.`]), 4); return; }
+    s.lastBuildAt = Date.now();
+    const built = new Set(s.structures.map((x) => x.item));
+    const options = Object.keys(BUILD_ITEMS).filter((k) => !built.has(k));
+    const choices = options.length ? options : Object.keys(BUILD_ITEMS); // built everything once? doubles are fine
+    const place = (item, why) => {
+      if (!BUILD_ITEMS[item]) item = pick(choices);
+      if (s.structures.some((x) => x.plot === plot.id)) return;
+      const id = (s.structures.reduce((m, x) => Math.max(m, x.id), 0) || 0) + 1;
+      s.structures.push({ id, item, label: BUILD_ITEMS[item].label, plot: plot.id, x: plot.x, z: plot.z, rot: plot.rot, progress: 0, why: clean(why || '', 160), day: s.day, time: timeStr(s.clock) });
+      if (f.action === 'build') f.buildId = id;
+      f.thought = clean(why ? `Building a ${BUILD_ITEMS[item].label}. ${why}` : `I'm going to build a ${BUILD_ITEMS[item].label}!`, 160);
+      this.say(pick([`I'm building a ${BUILD_ITEMS[item].label}!`, `Hmm... a ${BUILD_ITEMS[item].label} would look great here.`, `Let's make a ${BUILD_ITEMS[item].label}!`]), 5);
+    };
+    this.say('What should I build...', 3);
+    if (this.builder) {
+      Promise.resolve().then(() => this.builder(this, choices.map((k) => ({ id: k, ...BUILD_ITEMS[k] })))).then(
+        (r) => place(r?.item, r?.why),
+        (err) => { this.emit('error', err); place(pick(choices)); },
+      );
+    } else place(pick(choices));
+  }
+
+  finishBuild() {
+    const s = this.s, f = s.frog, st = s.structures.find((x) => x.id === f.buildId);
+    if (!st) return;
+    if (st.progress >= 0.95) {
+      st.progress = 1;
+      this.say(pick([`Ta-da! My ${st.label} is done!`, `Finished! Look at my ${st.label}!`, `The ${st.label} is ready!`]), 5);
+      this.remember(`Built a ${st.label} at the edge of my island.${st.why ? ' ' + st.why : ''}`);
+    } else this.remember(`Worked on my ${st.label}. Not done yet!`);
   }
 
   // ---------- dreams ----------
@@ -536,6 +627,7 @@ export class Brain {
       `Mood: ${m.label}. Letters waiting in the mailbox: ${s.mailbox.length}. Last activity: ${s.lastAction || 'none'}.`,
       `Recent memories:\n${s.memories.slice(-12).map((x) => `- [day ${x.day} ${x.time}] ${x.text}`).join('\n')}`,
       `Diary notes:\n${s.diary.slice(-5).map((d) => `- ${d.text}`).join('\n') || '- (none yet)'}`,
+      `Things you have built on your island: ${(s.structures || []).filter((x) => x.progress >= 1).map((x) => x.label).join(', ') || 'nothing yet'}.`,
       `Recent dreams:\n${(s.dreams || []).slice(-3).map((d) => `- ${d.text}`).join('\n') || '- (none yet)'}`,
       `Things you have learned on the internet:\n${(s.discoveries || []).slice(-5).map((d) => `- ${d.topic}: ${d.learned}`).join('\n') || '- (nothing yet)'}`,
     ].join('\n');
@@ -545,7 +637,8 @@ export class Brain {
     const s = this.s, f = s.frog, a = ACTIONS[f.action];
     const anim = f.phase === 'doing' ? a?.anim || 'sit' : f.phase === 'thinking' ? 'think' : 'hop';
     const dreaming = f.action === 'nap' && f.phase === 'doing' && !!f.dream;
-    const verb = dreaming ? 'dreaming' : f.phase === 'thinking' ? 'thinking about what to do' : f.phase === 'travel' ? (f.placeLabel === 'somewhere new' ? 'heading somewhere new' : `heading to ${f.placeLabel}`) : a?.verb || '';
+    const building = f.action === 'build' && f.phase === 'doing' ? s.structures.find((x) => x.id === f.buildId) : null;
+    const verb = building ? `building a ${building.label}` : dreaming ? 'dreaming' : f.phase === 'thinking' ? 'thinking about what to do' : f.phase === 'travel' ? (f.placeLabel === 'somewhere new' ? 'heading somewhere new' : `heading to ${f.placeLabel}`) : a?.verb || '';
     return {
       name: FROG_NAME, t: s.t, clock: s.clock, time: timeStr(s.clock), day: s.day, night: this.isNight(), weather: s.weather,
       needs: { ...s.needs }, mood: this.mood(),
@@ -553,6 +646,7 @@ export class Brain {
       memories: s.memories.slice(-60),
       discoveries: (s.discoveries || []).slice(-10),
       dreams: (s.dreams || []).slice(-10),
+      structures: (s.structures || []).map(({ id, item, label, x, z, rot, progress }) => ({ id, item, label, x, z, rot, progress })),
       nextBrowseInMinutes: this.browser ? Math.max(0, Math.round(((s.lastBrowseAt || 0) + this.browseEveryMs - Date.now()) / 60000)) : null, diary: s.diary.slice(-10), replies: s.replies.slice(-10),
       mailbox: s.mailbox.length, stats: { ...s.stats }, lastVisit: s.lastVisit, llm: !!this.decider,
     };
