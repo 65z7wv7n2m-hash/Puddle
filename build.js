@@ -1,8 +1,10 @@
-// Builds public/index.html by pasting brain.js into the page template,
-// so the page and the server always share the exact same brain code.
+// Builds public/index.html by pasting brain.js into the page template.
 import fs from 'node:fs';
 const here = (p) => new URL(p, import.meta.url);
-const tpl = fs.readFileSync(here('./web/index.template.html'), 'utf8');
+const tplFile = fs.existsSync(here('./web/index.template.html'))
+  ? './web/index.template.html'
+  : './index.template.html';
+const tpl = fs.readFileSync(here(tplFile), 'utf8');
 const brain = fs.readFileSync(here('./brain.js'), 'utf8');
 fs.mkdirSync(here('./public/'), { recursive: true });
 fs.writeFileSync(here('./public/index.html'), tpl.replace('/*__BRAIN__*/', () => brain));
