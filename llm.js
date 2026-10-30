@@ -38,7 +38,7 @@ export function makeClaude({ apiKey, model = 'claude-haiku-5-5', log = console }
 
   // Called every time Puddle finishes an activity and has to pick the next one.
   async function decider(brain) {
-    const options = brain.allowedActions().map((k) => `- ${k}: ${ACTIONS[k].desc}`).join('\n');
+    const options = brain.allowedActions().map((k) => `- ${k}: ${brain.actionDesc ? brain.actionDesc(k) : ACTIONS[k].desc}`).join('\n');
     const prompt = `${brain.promptContext()}
 
 You just finished what you were doing. What do you want to do next?
@@ -47,7 +47,7 @@ ${options}
 
 Think about your needs (low numbers are urgent), the time of day, the weather, your memories and your mood.
 Reply with ONLY a JSON object, no other text:
-{"action": "<one option name>", "thought": "<one short first-person sentence about why>", "say": "<optional very short thing to say out loud, or empty string>"}`;
+{"action": "<one option name>", "target": "<only for use: which thing, else empty>", "thought": "<one short first-person sentence about why>", "say": "<optional very short thing to say out loud, or empty string>"}`;
     const out = parseJSON(await ask(PERSONA, prompt, 200));
     log.info?.(`[brain] Claude chose ${out?.action}: ${out?.thought}`);
     return out;

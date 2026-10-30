@@ -35,6 +35,25 @@ export const BUILD_ITEMS = {
   windmill:   { label: 'windmill',       desc: 'a little windmill that spins in the breeze' },
   mushrooms:  { label: 'mushroom ring',  desc: 'a magical ring of glowing mushrooms' },
 };
+// How Puddle uses each thing once it's built. at = where he stands, in the building's own
+// coordinates (+z points toward the middle of the island); face = which way he looks.
+export const USES = {
+  bench:     { dur: 30, anim: 'sit',      fx: { energy: 25, fun: 6 },               at: [0, 0],      face: 0,       verb: 'resting on his bench',          lines: ['Ahh, my own bench.', 'Best seat on the island.'],            mem: 'Rested my legs on my bench.' },
+  lantern:   { dur: 25, anim: 'read',     fx: { fun: 10, social: 6 },               at: [0.75, 0.6], face: 0,       verb: 'sitting by his lantern',        lines: ['So cozy by the lantern.', 'My lantern keeps the dark friendly.'], mem: 'Sat in the glow of my lantern.', night: 0.35 },
+  birdhouse: { dur: 22, anim: 'sit',      fx: { social: 30, fun: 6 },               at: [0, 0.8],    face: Math.PI, verb: 'chatting with the birds',       lines: ['Tweet tweet! I mean... ribbit!', 'Hello, bird neighbor!'], mem: 'Chatted with the bird in my birdhouse.' },
+  telescope: { dur: 28, anim: 'stargaze', fx: { fun: 25, energy: 4 },               at: [0, 0.55],   face: Math.PI, verb: 'looking through his telescope', lines: ['I can see forever!', 'Is that a star... or a firefly?'],      mem: 'Looked through my telescope.', night: 0.45 },
+  stage:     { dur: 22, anim: 'croak',    fx: { fun: 18, social: 20, energy: -5 },  at: [0, 0],      face: 0,       verb: 'putting on a concert',          lines: ['Thank you, thank you! This one is called Ribbit.', 'Is this mic on? RIBBIT!'], mem: 'Put on a concert on my stage!' },
+  bughotel:  { dur: 20, anim: 'hunt',     fx: { hunger: 45, fun: 4 },               at: [0, 0.9],    face: Math.PI, verb: 'snacking at his bug hotel',     lines: ['Room service!', 'Some guests never check out. Yum.'],       mem: 'Had a snack at my bug hotel.' },
+  library:   { dur: 28, anim: 'read',     fx: { fun: 20, social: 2 },               at: [0, 0.8],    face: Math.PI, verb: 'reading at his tiny library',   lines: ['Let me re-read my notes...'],                                mem: 'Read at my tiny library.' },
+  fountain:  { dur: 22, anim: 'swim',     fx: { moisture: 60, fun: 14 },            at: [0.35, 0.2], face: 0,       verb: 'splashing in his fountain',     lines: ['Splish splash!', 'Fountain bath time!'],                     mem: 'Splashed around in my fountain.' },
+  swing:     { dur: 22, anim: 'swing',    fx: { fun: 30, energy: -4 },              at: [0, 0],      face: 0,       verb: 'swinging on his swing',         lines: ['Wheeee!', 'Higher! HIGHER!'],                                 mem: 'Went on my swing. Wheee!' },
+  windmill:  { dur: 22, anim: 'stargaze', fx: { fun: 12, energy: 6 },               at: [0.9, 1.0],  face: Math.PI, verb: 'watching his windmill spin',    lines: ['Round and round it goes.', 'The wind is busy today.'],       mem: 'Watched my windmill spin in the breeze.' },
+  mushrooms: { dur: 20, anim: 'dance',    fx: { fun: 22, social: 8 },               at: [0, 0],      face: 0,       verb: 'dancing in his mushroom ring',  lines: ['The mushrooms are glowing for me!', 'Magic dance time!'],     mem: 'Danced in my glowing mushroom ring.', night: 0.3 },
+  garden:    { dur: 24, anim: 'tend',     fx: { fun: 12, social: 4, energy: 4 },    at: [0, 1.6],    face: Math.PI, verb: 'tending his garden',            lines: ['Grow, little flowers!', 'Mmm, they smell like summer.'],     mem: 'Tended my flower garden.' },
+};
+// Turns a spot near a building (in its own coordinates) into an island position.
+export const toWorld = (st, lx, lz) => ({ x: st.x + lx * Math.cos(st.rot) + lz * Math.sin(st.rot), z: st.z - lx * Math.sin(st.rot) + lz * Math.cos(st.rot) });
+
 // 12 building spots in a ring around the old island.
 export const PLOTS = Array.from({ length: 12 }, (_, i) => {
   const a = (i / 12) * Math.PI * 2 + Math.PI / 12, r = 13.8;
@@ -58,6 +77,7 @@ export const ACTIONS = {
   gaze:    { place: 'rock',     jitter: 0,   dur: 26, anim: 'sit',    fx: { fun: 12, energy: 6 },                verb: 'watching the sky',       desc: 'Sit on the lookout rock and watch clouds (or stars at night).' },
   mail:    { place: 'mailbox',  jitter: 0,   dur: 16, anim: 'read',   fx: { social: 30, fun: 4 },                verb: 'reading his mail',       desc: 'Go to the mailbox, read letters from visitors and reply.' },
   dance:   { place: 'clearing', jitter: 0.6, dur: 20, anim: 'dance',  fx: { fun: 28, moisture: 20, social: 5 },  verb: 'dancing in the rain',    desc: 'Rain dance in the clearing. Only possible while it is raining.' },
+  use:     { place: 'thing',    jitter: 0,   dur: 25, anim: 'sit',    fx: {},                                    verb: 'playing',                desc: 'Use something you built.' },
   build:   { place: 'plot',     jitter: 0,   dur: 40, anim: 'build',  fx: { fun: 30, energy: -12, hunger: -4 },  verb: 'building something',     desc: 'Build something new on the empty land around the edge of your island.' },
   browse:  { place: 'log',      jitter: 0,   dur: 30, anim: 'read',   fx: { fun: 22, social: 4 },                verb: 'browsing the internet',  desc: 'Sit on the mossy log and look something up on the internet.' },
 };
@@ -223,14 +243,15 @@ export class Brain {
     } else if (f.phase === 'travel') {
       if (this.moveAlong(dt, 1.6)) {
         const a = ACTIONS[f.action];
-        f.phase = 'doing'; f.timer = a.dur; f.count = 0;
+        f.phase = 'doing'; f.timer = this.info().dur; f.count = 0;
         const p = PLACES[a.place];
         if (p && p.face != null && a.place !== 'meadow' && a.place !== 'pond') f.face = p.face;
         this.arrive();
       }
     } else if (f.phase === 'doing') {
       const a = ACTIONS[f.action];
-      for (const k in a.fx) s.needs[k] = clamp(s.needs[k] + (a.fx[k] / a.dur) * dt);
+      const info = this.info();
+      for (const k in info.fx) s.needs[k] = clamp(s.needs[k] + (info.fx[k] / info.dur) * dt);
       this.during(dt);
       f.timer -= dt;
       if (f.timer <= 0 && !this.replying) this.finish();
@@ -264,6 +285,38 @@ export class Brain {
   }
 
   // ---------- deciding ----------
+  // The activity he's doing right now (using a building borrows that building's timing and effects).
+  info() {
+    const f = this.s.frog, a = ACTIONS[f.action];
+    if (f.action === 'use') { const st = this.useTarget(); const u = st && USES[st.item]; if (u) return { ...a, ...u }; }
+    return a;
+  }
+  useTarget() { return this.s.structures.find((x) => x.id === this.s.frog.useId) || null; }
+  finishedThings() { return this.s.structures.filter((x) => x.progress >= 1 && USES[x.item]); }
+  // Which built thing would help him most right now?
+  bestThing() {
+    const n = this.s.needs, night = this.isNight();
+    let best = null, bv = -1e9;
+    for (const st of this.finishedThings()) {
+      const u = USES[st.item];
+      let v = 0.1 + Math.random() * 0.15;
+      for (const k in u.fx) if (u.fx[k] > 0) v += ((100 - n[k]) / 100) ** 2 * (u.fx[k] / 30);
+      if (night && u.night) v += u.night;
+      if (st.id === this.s.lastUsedId) v -= 0.35;
+      if (v > bv) { bv = v; best = st; }
+    }
+    return best ? { st: best, score: bv } : null;
+  }
+  findThing(name) {
+    if (!name) return null;
+    const q = String(name).toLowerCase();
+    return this.finishedThings().find((x) => q.includes(x.label.toLowerCase()) || x.label.toLowerCase().includes(q) || q.includes(x.item)) || null;
+  }
+  actionDesc(k) {
+    if (k !== 'use') return ACTIONS[k].desc;
+    const things = this.finishedThings().map((x) => `${x.label} (${USES[x.item].verb.replace(/\bhis\b/g, 'your')})`);
+    return `Use something you built: ${things.join('; ')}. Say which one in "target".`;
+  }
   unfinished() { return this.s.structures.find((x) => x.progress < 1) || null; }
   freePlot() {
     const used = new Set(this.s.structures.map((x) => x.plot));
@@ -276,7 +329,7 @@ export class Brain {
   }
   browseDue() { return !!this.browser && Date.now() - (this.s.lastBrowseAt || 0) >= this.browseEveryMs; }
   allowedActions() {
-    return Object.keys(ACTIONS).filter((k) => (k !== 'dance' || this.s.weather === 'rain') && (k !== 'browse' || this.browseDue()) && (k !== 'build' || this.canBuild()));
+    return Object.keys(ACTIONS).filter((k) => (k !== 'dance' || this.s.weather === 'rain') && (k !== 'browse' || this.browseDue()) && (k !== 'build' || this.canBuild()) && (k !== 'use' || this.finishedThings().length > 0));
   }
 
   scores() {
@@ -292,6 +345,7 @@ export class Brain {
       gaze: w('fun') * 0.55 + (night ? 0.35 : 0.06),
       mail: w('social') * 1.0 + (s.mailbox.length ? 0.9 : 0),
       dance: s.weather === 'rain' ? 0.55 + w('fun') * 0.6 : -9,
+      use: (this._best = this.bestThing()) ? this._best.score : -9,
       build: this.canBuild() ? w('fun') * 0.8 + (n.energy > 40 ? 0.3 : -0.3) + (this.unfinished() ? 0.3 : 0) : -9,
     };
     if (s.lastAction && sc[s.lastAction] != null) sc[s.lastAction] -= 0.3;
@@ -301,6 +355,7 @@ export class Brain {
 
   utilityChoice() {
     const sc = this.scores();
+    this._utilityTarget = this._best?.st || null;
     let best = 'lilypad', bv = -1e9;
     for (const k in sc) if (sc[k] > bv) { bv = sc[k]; best = k; }
     return { action: best, thought: this.makeThought(best) };
@@ -308,6 +363,7 @@ export class Brain {
 
   makeThought(name) {
     const night = this.isNight();
+    if (name === 'use') { const t = this.bestThing()?.st; return t ? `I feel like ${USES[t.item].verb.replace(/\bhis\b/g, 'my')}.` : 'Hmm.'; }
     if (name === 'nap' && night) return pick(THOUGHTS.napNight);
     if (name === 'sing' && night) return pick(THOUGHTS.singNight);
     if (name === 'gaze' && night) return pick(THOUGHTS.gazeNight);
@@ -320,11 +376,11 @@ export class Brain {
     // (The 3-hour timer only restarts once he actually sits down and browses, so an interruption doesn't cost him his turn.)
     if (this.browseDue() && this.s.needs.energy > 15) return this.start('browse', this.makeThought('browse'));
     const go = (d) => {
-      let { action, thought, say } = d || {};
+      let { action, thought, say, target } = d || {};
       if (!ACTIONS[action] || !this.allowedActions().includes(action)) {
-        const u = this.utilityChoice(); action = u.action; thought = u.thought; say = null;
+        const u = this.utilityChoice(); action = u.action; thought = u.thought; say = null; target = this._utilityTarget?.label;
       }
-      this.start(action, thought, say);
+      this.start(action, thought, say, target);
     };
     if (this.decider) {
       this.pending = true;
@@ -332,16 +388,22 @@ export class Brain {
         (d) => { this.pending = false; go(d); },
         (err) => { this.pending = false; this.emit('error', err); go(null); },
       );
-    } else go(this.utilityChoice());
+    } else { const u = this.utilityChoice(); go({ ...u, target: this._utilityTarget?.label }); }
   }
 
-  start(name, thought, say) {
+  start(name, thought, say, target) {
     const s = this.s, f = s.frog, a = ACTIONS[name];
     if (f.action === 'nap' && f.dream) this.wakeUp();
     f.action = name; f.phase = 'travel'; f.count = 0; f.lickTimer = 1; f.wanderT = 0;
     f.thought = clean(thought || this.makeThought(name), 160);
     let p;
     if (a.place === 'random') { p = this.randomSpot(); f.placeLabel = 'somewhere new'; }
+    else if (a.place === 'thing') {
+      const st = this.findThing(target) || this.bestThing()?.st || this.finishedThings()[0];
+      const u = USES[st.item];
+      f.useId = st.id; p = toWorld(st, u.at[0], u.at[1]); f.placeLabel = `his ${st.label}`;
+      if (!thought) f.thought = clean(`I feel like ${u.verb.replace(/\bhis\b/g, 'my')}.`, 160);
+    }
     else if (a.place === 'plot') {
       const half = this.unfinished(), plot = half ? PLOTS[half.plot] : this.freePlot() || PLOTS[0];
       f.buildPlot = plot.id; f.buildId = half ? half.id : null;
@@ -372,6 +434,7 @@ export class Brain {
     if (a === 'mail') return this.readMail();
     if (a === 'browse') return this.browse();
     if (a === 'build') return this.beginBuild();
+    if (a === 'use') return this.beginUse();
     if (asleepSoon) { this.s.stats.naps++; this.maybeDream(); return; }
     if (Math.random() < 0.55) {
       const lines = {
@@ -396,6 +459,9 @@ export class Brain {
       f.wanderT -= dt;
       if (f.wanderT <= 0 && !f.path.length) { this.goTo(this.randomSpot(f, 3.5)); f.wanderT = rnd(3, 6); }
       this.moveAlong(dt, 1.3);
+    } else if (f.action === 'use' && this.useTarget()?.item === 'bughotel') {
+      f.lickTimer -= dt;
+      if (f.lickTimer <= 0) { f.lick++; s.stats.bugsEaten++; f.lickTimer = rnd(2, 3.2); }
     } else if (f.action === 'build') {
       const st = s.structures.find((x) => x.id === f.buildId);
       if (st) st.progress = Math.min(0.99, st.progress + dt / ACTIONS.build.dur);
@@ -423,13 +489,38 @@ export class Brain {
       dance: 'Danced in the rain!',
       browse: null,
       build: null,
+      use: null,
     }[a];
     if (a === 'build') this.finishBuild();
+    if (a === 'use') this.finishUse();
     if (a === 'swim') s.stats.swims++;
     if (a === 'sing') s.stats.songs++;
     if (mem) this.remember(mem);
     if (a === 'nap') this.wakeUp();
     f.phase = 'thinking'; f.timer = rnd(1.5, 3.5); f.path = []; f.moving = false;
+  }
+
+  // ---------- using what he built ----------
+  beginUse() {
+    const s = this.s, f = s.frog, st = this.useTarget();
+    if (!st) { f.timer = 0; return; }
+    const u = USES[st.item];
+    f.face = st.rot + u.face;
+    s.lastUsedId = st.id;
+    if (st.item === 'library' && s.discoveries?.length) {
+      const d = pick(s.discoveries);
+      this.say(clean(`Re-reading my notes about ${d.topic}... ${d.learned}`, 220), 9);
+      f.libraryTopic = d.topic;
+    } else this.say(pick(u.lines), 5);
+  }
+
+  finishUse() {
+    const s = this.s, f = s.frog, st = this.useTarget();
+    if (!st) return;
+    const u = USES[st.item];
+    s.stats.played = (s.stats.played || 0) + 1;
+    this.remember(st.item === 'library' && f.libraryTopic ? `Re-read my notes about ${f.libraryTopic} at my tiny library.` : u.mem);
+    f.libraryTopic = null;
   }
 
   // ---------- building ----------
@@ -635,14 +726,15 @@ export class Brain {
 
   snapshot() {
     const s = this.s, f = s.frog, a = ACTIONS[f.action];
-    const anim = f.phase === 'doing' ? a?.anim || 'sit' : f.phase === 'thinking' ? 'think' : 'hop';
+    const info = ACTIONS[f.action] ? this.info() : a;
+    const anim = f.phase === 'doing' ? info?.anim || 'sit' : f.phase === 'thinking' ? 'think' : 'hop';
     const dreaming = f.action === 'nap' && f.phase === 'doing' && !!f.dream;
     const building = f.action === 'build' && f.phase === 'doing' ? s.structures.find((x) => x.id === f.buildId) : null;
-    const verb = building ? `building a ${building.label}` : dreaming ? 'dreaming' : f.phase === 'thinking' ? 'thinking about what to do' : f.phase === 'travel' ? (f.placeLabel === 'somewhere new' ? 'heading somewhere new' : `heading to ${f.placeLabel}`) : a?.verb || '';
+    const verb = building ? `building a ${building.label}` : dreaming ? 'dreaming' : f.phase === 'thinking' ? 'thinking about what to do' : f.phase === 'travel' ? (f.placeLabel === 'somewhere new' ? 'heading somewhere new' : `heading to ${f.placeLabel}`) : info?.verb || '';
     return {
       name: FROG_NAME, t: s.t, clock: s.clock, time: timeStr(s.clock), day: s.day, night: this.isNight(), weather: s.weather,
       needs: { ...s.needs }, mood: this.mood(),
-      frog: { x: f.x, z: f.z, face: f.face, action: f.action, phase: f.phase, anim, verb, thought: f.thought, say: f.say, moving: f.moving, lick: f.lick, dream: dreaming ? f.dream : null },
+      frog: { x: f.x, z: f.z, face: f.face, action: f.action, phase: f.phase, anim, verb, thought: f.thought, say: f.say, moving: f.moving, lick: f.lick, dream: dreaming ? f.dream : null, useId: f.action === 'use' ? f.useId : null },
       memories: s.memories.slice(-60),
       discoveries: (s.discoveries || []).slice(-10),
       dreams: (s.dreams || []).slice(-10),
