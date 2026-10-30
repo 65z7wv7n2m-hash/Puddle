@@ -560,7 +560,11 @@ let follow = true;
 $('btnFollow').onclick = () => { follow = !follow; $('btnFollow').innerHTML = follow ? '🎥 <span class="lbl">Follow</span>' : '🎥 <span class="lbl">Free cam</span>'; };
 
 // ============================================================ animation
-const F = { x: 0, z: 0, y: 0, face: 0, hop: 0, blink: 2, lastLick: null, lick: null, zT: 0, noteT: 0, ripT: 0, init: false, seenVisit: 0 };
+const F = { x: 0, z: 0, y: 0, face: 0, hop: 0, blink: 2, lastLick: null, lick: null, zT: 0, noteT: 0, ripT: 0, init: false, seenVisit: 0,
+  pitch: 0, roll: 0, yaw: 0, glance: 0, tilt: 0, glanceT: 2, fidget: 0, fidgetT: 6, happy: 0 };
+function landingPuff() {
+  for (let i = 0; i < 4; i++) floatText('●', '#e3dccb', V2.set(F.x + rnd(-0.35, 0.35), F.y + 0.05, F.z + rnd(-0.35, 0.35)), { size: rnd(0.12, 0.2), vy: 0.25, life: 0.55, drift: 0.7 });
+}
 const V = new THREE.Vector3(), V2 = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0);
 
 function nearestBug(maxD) {
@@ -582,7 +586,7 @@ function updateLick(dt) {
   frog.tongue.scale.y = Math.max(0.001, len * ext);
   if (p >= 0.5 && !L.caught) {
     L.caught = true;
-    if (L.bug) { L.bug.userData.eaten = true; L.bug.visible = false; L.bug.userData.respawn = 5; if (L.bug.userData.kind === 'visitor') L.bug.userData.dead = true; }
+    if (L.bug) { if (L.bug.userData.kind === 'visitor') F.happy = 0.8; L.bug.userData.eaten = true; L.bug.visible = false; L.bug.userData.respawn = 5; if (L.bug.userData.kind === 'visitor') L.bug.userData.dead = true; }
   }
 }
 
@@ -604,27 +608,85 @@ function updateFrog(dt, T) {
   if (anim === 'dance' && still) targetFace = F.face + 3;
   F.face = lerpAngle(F.face, targetFace, 1 - Math.exp(-(moving ? 10 : anim === 'dance' ? 1.2 : 4) * dt));
 
-  if (moving || F.hop > 0) { F.hop += dt / 0.46; if (F.hop >= 1) F.hop = moving ? F.hop - 1 : 0; }
-  const arc = F.hop > 0 ? Math.sin(F.hop * Math.PI) : 0;
+  // ---- hopping: crouch → leap (nose up, then nose down) → squishy landing ----
+  if (moving || F.hop > 0) {
+    const before = F.hop;
+    F.hop += dt / 0.5;
+    if (before < 0.85 && F.hop >= 0.85 && groundY(F.x, F.z) >= 0) landingPuff();
+    if (F.hop >= 1) F.hop = moving ? F.hop - 1 : 0;
+  }
+  const hp = F.hop;
+  let arc = 0, crouch = 0, air = 0;
+  if (hp > 0) {
+    if (hp < 0.18) crouch = Math.sin((hp / 0.18) * Math.PI) * 0.8;
+    else if (hp < 0.85) { air = (hp - 0.18) / 0.67; arc = Math.sin(air * Math.PI); }
+    else crouch = Math.sin(((hp - 0.85) / 0.15) * Math.PI);
+  }
   const g = groundY(F.x, F.z), swimming = g < 0;
   F.y += (g - F.y) * (1 - Math.exp(-12 * dt));
-  let y = F.y + arc * (swimming ? 0.14 : 0.36);
+  let y = F.y + arc * (swimming ? 0.14 : 0.42);
 
+  // ---- body language: every activity gets its own posture, with smooth blending ----
   const sleeping = anim === 'sleep' && still;
-  let sy = 1, sx = 1, tilt = 0;
-  const breathe = Math.sin(T * 2.2) * 0.022;
-  if (arc > 0) { sy = 1 + arc * 0.15; sx = 1 - arc * 0.06; } else { sy = 1 + breathe; sx = 1 - breathe * 0.5; }
-  if (sleeping) { sy = 0.9 + Math.sin(T * 1.3) * 0.03; y -= 0.03; }
-  if (anim === 'dance' && still) y += Math.abs(Math.sin(T * 5)) * 0.28;
-  if (swimming && arc === 0) y += Math.sin(T * 2.4) * 0.025;
-  if (anim === 'hunt' && still) tilt = -0.2;
-  if (anim === 'sit' && still && st.action === 'gaze') tilt = -0.25;
-  if (anim === 'read' && still) tilt = 0.12;
+  let sx = 1, sy = 1, pitch = 0, roll = 0, yaw = 0, lunge = 0;
+  const breathe = Math.sin(T * 2.2) * 0.025;
+  if (hp > 0) {
+    sy = 1 + arc * 0.18 - crouch * 0.22; sx = 1 - arc * 0.08 + crouch * 0.14;
+    if (air > 0) pitch = -Math.cos(air * Math.PI) * 0.32;
+  } else { sy = 1 + breathe; sx = 1 - breathe * 0.5; }
+
+  // idle glances: every few seconds he looks somewhere new (or back ahead)
+  F.glanceT -= dt;
+  if (F.glanceT <= 0) {
+    F.glanceT = rnd(1.8, 4.5);
+    F.glance = Math.random() < 0.35 ? 0 : rnd(-0.7, 0.7);
+    F.tilt = Math.random() < 0.5 ? 0 : rnd(-0.16, 0.16);
+  }
+  // little fidget hop now and then while sitting around
+  F.fidgetT -= dt;
+  if (F.fidgetT <= 0) { F.fidgetT = rnd(7, 15); if (still && ['sit', 'think', 'read'].includes(anim)) F.fidget = 0.0001; }
+  if (F.fidget > 0) { F.fidget += dt / 0.4; if (F.fidget >= 1) F.fidget = 0; else { y += Math.sin(F.fidget * Math.PI) * 0.12; sy *= 1 + Math.sin(F.fidget * Math.PI) * 0.08; } }
+
+  if (still) {
+    if (sleeping) {
+      sy = 0.88 + Math.sin(T * 1.1) * 0.035; sx = 1.04 - Math.sin(T * 1.1) * 0.02;
+      pitch = 0.2; roll = 0.07 + Math.sin(T * 0.55) * 0.03; y -= 0.03;
+    } else if (anim === 'croak' || anim === 'dance') {
+      const beat = Math.abs(Math.sin(T * 4.5));
+      sx *= 1 + beat * 0.12; sy *= 1 - beat * 0.05; pitch = -0.18 * beat; roll = Math.sin(T * 2.25) * 0.1;
+      if (anim === 'dance') { y += Math.abs(Math.sin(T * 5)) * 0.28; roll = Math.sin(T * 5) * 0.28; }
+    } else if (anim === 'hunt') {
+      const bug = nearestBug(3.5);
+      if (bug) { const a = Math.atan2(bug.position.x - F.x, bug.position.z - F.z); yaw = Math.max(-1, Math.min(1, ((a - F.face + Math.PI * 3) % (Math.PI * 2)) - Math.PI)); }
+      pitch = -0.28; sy *= 0.94; // crouched, eyes up, ready to strike
+    } else if (anim === 'swim' || swimming) {
+      pitch = 0.16; roll = Math.sin(T * 3) * 0.1;
+    } else if (anim === 'read') {
+      pitch = 0.14; roll = Math.sin(T * 0.9) * 0.08; yaw = Math.sin(T * 1.6) * 0.14;
+    } else if (st.action === 'gaze') {
+      pitch = -0.32; yaw = Math.sin(T * 0.3) * 0.45;
+    } else if (anim === 'think') {
+      roll = Math.sin(T * 0.8) * 0.1 + F.tilt; yaw = F.glance * 0.8;
+    } else {
+      yaw = F.glance; roll = F.tilt;
+    }
+  } else if (swimming) { pitch = Math.max(pitch, 0.1); roll = Math.sin(T * 6) * 0.08; }
+
+  // happy wiggle after a wave or a gift
+  if (F.happy > 0) {
+    F.happy -= dt; const h = F.happy;
+    y += Math.abs(Math.sin(h * Math.PI * 2.5)) * 0.22; roll += Math.sin(h * 18) * 0.15; sy *= 1 + Math.abs(Math.sin(h * Math.PI * 2.5)) * 0.08;
+  }
+  // tongue strike: lean into it
+  if (F.lick) { const lp = F.lick.t / 0.38; lunge = Math.sin(Math.min(1, lp) * Math.PI) * 0.1; pitch -= lunge * 1.2; }
+
+  const ease = 1 - Math.exp(-7 * dt);
+  F.pitch += (pitch - F.pitch) * ease; F.roll += (roll - F.roll) * ease; F.yaw += (yaw - F.yaw) * ease;
   frog.g.position.set(F.x, y, F.z);
   frog.g.rotation.y = F.face;
   frog.b.scale.set(sx, sy, sx);
-  frog.b.rotation.x = lerp(frog.b.rotation.x, tilt, 0.1);
-  frog.b.rotation.z = anim === 'think' && still ? Math.sin(T * 0.8) * 0.06 : 0;
+  frog.b.rotation.set(F.pitch, F.yaw, F.roll);
+  frog.b.position.z = lunge;
 
   const kick = (swimming && (moving || anim === 'swim')) ? Math.sin(T * 7) : 0;
   for (const l of frog.legs) {
@@ -661,6 +723,7 @@ function updateFrog(dt, T) {
   if (lv && lv.seq > F.seenVisit) {
     F.seenVisit = lv.seq;
     if (lv.type === 'bug' && !lv.asleep) spawnVisitorBug();
+    if (!lv.asleep && (lv.type === 'wave' || lv.type === 'letter')) F.happy = 1.2;
     if (lv.type === 'wave' && !lv.asleep) for (let i = 0; i < 4; i++) floatText('♥', '#ef5d86', V2.set(V.x + rnd(-0.4, 0.4), V.y + 0.8 + i * 0.15, V.z), { size: 0.38, vy: 0.7, life: 1.7, drift: 0.4 });
   }
 }
