@@ -37,6 +37,8 @@ const brain = new Brain({
   saved: saved?.state,
   decider: claude?.decider,
   replier: claude?.replier,
+  browser: claude?.browse,
+  browseEveryHours: Number(process.env.BROWSE_EVERY_HOURS) || 3,
   realClock: process.env.REAL_CLOCK === '1',
 });
 
@@ -62,6 +64,7 @@ brain.on('memory', () => {
     .finally(() => { reflecting = false; });
 });
 brain.on('start', ({ action, thought }) => console.log(`[${timeStr(brain.s.clock)}] ${action}: ${thought}`));
+brain.on('memory', (m) => { if (m.text.startsWith('Looked up')) console.log('[browse]', m.text); });
 
 // ---------- the heartbeat ----------
 let last = Date.now();

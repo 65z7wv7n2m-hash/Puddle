@@ -36,6 +36,7 @@ export const ACTIONS = {
   gaze:    { place: 'rock',     jitter: 0,   dur: 26, anim: 'sit',    fx: { fun: 12, energy: 6 },                verb: 'watching the sky',       desc: 'Sit on the lookout rock and watch clouds (or stars at night).' },
   mail:    { place: 'mailbox',  jitter: 0,   dur: 16, anim: 'read',   fx: { social: 30, fun: 4 },                verb: 'reading his mail',       desc: 'Go to the mailbox, read letters from visitors and reply.' },
   dance:   { place: 'clearing', jitter: 0.6, dur: 20, anim: 'dance',  fx: { fun: 28, moisture: 20, social: 5 },  verb: 'dancing in the rain',    desc: 'Rain dance in the clearing. Only possible while it is raining.' },
+  browse:  { place: 'log',      jitter: 0,   dur: 30, anim: 'read',   fx: { fun: 22, social: 4 },                verb: 'browsing the internet',  desc: 'Sit on the mossy log and look something up on the internet.' },
 };
 
 const THOUGHTS = {
@@ -52,6 +53,7 @@ const THOUGHTS = {
   mail:    ['Ooh, I think I have mail!', 'Someone wrote to me? Going to check!'],
   mailNone:['Maybe someone left me a letter...', 'I will go say hi to whoever is watching.'],
   dance:   ['RAIN! Rain dance time!!', 'Raindrops on my skin. Best day ever. Dancing!'],
+  browse:  ['I just thought of a question. To the internet!', 'I wonder... I bet the internet knows.', 'Feeling curious. Time to look something up.'],
 };
 
 const clamp = (v, a = 0, b = 100) => Math.max(a, Math.min(b, v));
@@ -78,13 +80,17 @@ function routeAround(from, to) {
 }
 
 export class Brain {
-  constructor({ saved = null, decider = null, replier = null, realClock = false } = {}) {
+  constructor({ saved = null, decider = null, replier = null, browser = null, browseEveryHours = 3, realClock = false } = {}) {
     this.decider = decider;   // optional async (brain) => { action, thought, say }
     this.replier = replier;   // optional async (brain, letters) => [reply, ...]
+    this.browser = browser;   // optional async (brain) => { topic, learned, say }
+    this.browseEveryMs = browseEveryHours * 3600 * 1000;
     this.realClock = realClock;
     this.pending = false;
     this.listeners = {};
     this.s = saved && saved.v === 1 ? saved : Brain.fresh();
+    this.s.discoveries ||= [];
+    this.s.lastBrowseAt ??= 0;
     const f = this.s.frog;
     if (!['travel', 'doing'].includes(f.phase) || !ACTIONS[f.action]) { f.phase = 'thinking'; f.timer = 2; }
   }
@@ -102,6 +108,7 @@ export class Brain {
       },
       lastAction: null, memories: [{ day: 1, time: '08:00', text: 'I woke up on my little island. Hello, world!' }],
       diary: [], friends: {}, mailbox: [], replies: [], letterId: 0, visitSeq: 0, lastVisit: null,
+      discoveries: [], lastBrowseAt: 0,
       stats: { bugsEaten: 0, swims: 0, songs: 0, lettersRead: 0, naps: 0 },
     };
   }
@@ -222,7 +229,10 @@ export class Brain {
   }
 
   // ---------- deciding ----------
-  allowedActions() { return Object.keys(ACTIONS).filter((k) => k !== 'dance' || this.s.weather === 'rain'); }
+  browseDue() { return !!this.browser && Date.now() - (this.s.lastBrowseAt || 0) >= this.browseEveryMs; }
+  allowedActions() {
+    return Object.keys(ACTIONS).filter((k) => (k !== 'dance' || this.s.weather === 'rain') && (k !== 'browse' || this.browseDue()));
+  }
 
   scores() {
     const s = this.s, n = s.needs, night = this.isNight();
@@ -260,6 +270,8 @@ export class Brain {
   }
 
   decide() {
+    // Every few hours curiosity wins: he goes and looks something up.
+    if (this.browseDue() && this.s.needs.energy > 15) { this.s.lastBrowseAt = Date.now(); return this.start('browse', this.makeThought('browse')); }
     const go = (d) => {
       let { action, thought, say } = d || {};
       if (!ACTIONS[action] || !this.allowedActions().includes(action)) {
@@ -303,6 +315,7 @@ export class Brain {
   arrive() {
     const f = this.s.frog, a = f.action, asleepSoon = a === 'nap';
     if (a === 'mail') return this.readMail();
+    if (a === 'browse') return this.browse();
     if (asleepSoon) { this.s.stats.naps++; return; }
     if (Math.random() < 0.55) {
       const lines = {
@@ -349,6 +362,7 @@ export class Brain {
       gaze: night ? 'Watched the stars from the lookout rock.' : 'Watched the clouds from the lookout rock.',
       mail: null,
       dance: 'Danced in the rain!',
+      browse: null,
     }[a];
     if (a === 'swim') s.stats.swims++;
     if (a === 'sing') s.stats.songs++;
@@ -415,6 +429,31 @@ export class Brain {
     } else done(null);
   }
 
+  browse() {
+    const s = this.s, f = s.frog;
+    s.lastBrowseAt = Date.now();
+    this.say(pick(['Let me look this up...', 'Searching the internet...', '*tap tap tap*']), 4);
+    this.replying = true;
+    Promise.resolve().then(() => this.browser(this)).then(
+      (r) => {
+        this.replying = false;
+        if (!r || !r.topic) throw new Error('no result');
+        const topic = clean(r.topic, 80), learned = clean(r.learned, 240);
+        f.thought = clean(`I looked up ${topic}!`, 160);
+        this.say(clean(r.say || learned, 160), 8);
+        s.discoveries.push({ day: s.day, time: timeStr(s.clock), topic, learned });
+        if (s.discoveries.length > 30) s.discoveries.shift();
+        this.remember(`Looked up "${topic}" on the internet. I learned: ${learned}`);
+        f.timer = Math.max(f.timer, 10);
+      },
+    ).catch((err) => {
+      this.replying = false;
+      if (err?.message !== 'no result') this.emit('error', err);
+      this.say('Hmm, the internet is not working for me right now.', 5);
+      this.remember('Tried to look something up, but the internet would not load.');
+    });
+  }
+
   templateReply(L) {
     const t = L.text.toLowerCase(), n = L.name, again = (this.s.friends[n]?.letters || 0) > 0;
     if (/\b(bug|bugs|fly|flies|snack|food|eat)\b/.test(t)) return pick([`Did someone say bugs? ${n}, you get me.`, `${n}, my tummy says thank you for thinking of snacks.`]);
@@ -435,6 +474,7 @@ export class Brain {
       `Mood: ${m.label}. Letters waiting in the mailbox: ${s.mailbox.length}. Last activity: ${s.lastAction || 'none'}.`,
       `Recent memories:\n${s.memories.slice(-12).map((x) => `- [day ${x.day} ${x.time}] ${x.text}`).join('\n')}`,
       `Diary notes:\n${s.diary.slice(-5).map((d) => `- ${d.text}`).join('\n') || '- (none yet)'}`,
+      `Things you have learned on the internet:\n${(s.discoveries || []).slice(-5).map((d) => `- ${d.topic}: ${d.learned}`).join('\n') || '- (nothing yet)'}`,
     ].join('\n');
   }
 
