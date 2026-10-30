@@ -117,5 +117,18 @@ Finish with ONLY a JSON object:
     return out;
   }
 
-  return { decider, replier, reflect, browse };
+  // Called when Puddle falls asleep (at most every 30 minutes). Returns a short dream.
+  async function dream(brain) {
+    const prompt = `${brain.promptContext()}
+
+You just fell asleep in your mushroom house and you're dreaming.
+Write your dream in 2 or 3 short sentences, starting with "I dreamed".
+Mix real things from your memories, letters, and what you learned online with silly, magical dream logic.
+Keep it gentle and family-friendly. Reply with only the dream.`;
+    return (await ask(PERSONA, prompt, 200)).trim().replace(/^"|"$/g, '');
+  }
+  // The brain looks for dream() here, so server.js doesn't need to change.
+  decider.dream = dream;
+
+  return { decider, replier, reflect, browse, dream };
 }

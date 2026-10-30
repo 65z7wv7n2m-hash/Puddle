@@ -53,6 +53,9 @@
   #bubble.show { opacity:1; }
   #bubble::after { content:''; position:absolute; left:50%; bottom:-7px; margin-left:-7px; border:7px solid transparent; border-bottom:none; border-top-color:white; }
   #bubble.think { font-style:italic; color:var(--muted); }
+  #bubble.dream { max-width:280px; background:#f1eaff; color:#4a3a78; font-style:italic; box-shadow:0 4px 18px rgba(120,90,200,.35); }
+  #bubble.dream::after { border-top-color:#f1eaff; }
+  #mem li.dream { background:linear-gradient(90deg,rgba(160,130,240,.22),transparent); margin:0 -6px; padding:7px 6px; border-radius:8px; font-style:italic; }
   #nametag { font-size:12px; font-weight:600; background:rgba(34,51,29,.7); color:white; padding:2px 9px; border-radius:99px; }
   #loading { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; font-size:20px; font-weight:600; color:white; text-shadow:0 2px 8px rgba(0,0,0,.25); pointer-events:none; }
   .hidden { display:none !important; }
@@ -426,7 +429,7 @@ async function boot() {
   } else {
     let saved = null, savedAt = 0;
     try { const raw = JSON.parse(store.get(SAVE_KEY) || 'null'); if (raw) { saved = raw.state; savedAt = raw.savedAt; } } catch { }
-    brain = new Brain({ saved });
+    brain = new Brain({ saved, dreamEveryMinutes: 3 });
     window.__puddle = brain; // handy for poking at him from the browser console
     if (saved && savedAt) {
       const mins = Math.round((Date.now() - savedAt) / 60000);
@@ -483,7 +486,7 @@ function updateHUD() {
   const mk = snap.memories.length + '|' + (snap.memories.at(-1)?.text || '') + '|' + snap.memories.at(-1)?.time;
   if (mk !== memKey) {
     memKey = mk;
-    $('mem').innerHTML = snap.memories.slice().reverse().map((m) => `<li class="${m.text.startsWith('Read a letter') ? 'reply' : ''}"><span class="when">Day ${m.day} · ${m.time}</span>${esc(m.text)}</li>`).join('');
+    $('mem').innerHTML = snap.memories.slice().reverse().map((m) => `<li class="${m.text.startsWith('Read a letter') ? 'reply' : m.text.startsWith('I dreamed') ? 'dream' : ''}"><span class="when">Day ${m.day} · ${m.time}</span>${esc(m.text)}</li>`).join('');
   }
   flag.rotation.x = lerp(flag.rotation.x, snap.mailbox > 0 ? 0 : -Math.PI / 2, 0.2);
   const asleep = f.action === 'nap' && f.phase === 'doing';
@@ -617,7 +620,14 @@ function updateFrog(dt, T) {
   updateLick(dt);
 
   frog.g.getWorldPosition(V);
-  if (sleeping) { F.zT -= dt; if (F.zT <= 0) { F.zT = 1.1; floatText('z', '#5f7fb5', V2.set(V.x + 0.2, V.y + 0.9, V.z), { size: rnd(0.3, 0.45), vy: 0.45, life: 2.6 }); } }
+  if (sleeping) {
+    F.zT -= dt;
+    if (F.zT <= 0) {
+      F.zT = 1.1;
+      const dreamy = st.dream && Math.random() < 0.5; // dreaming: sparkles mixed in with the z's
+      floatText(dreamy ? '✦' : 'z', dreamy ? '#9b7be0' : '#5f7fb5', V2.set(V.x + rnd(-0.1, 0.3), V.y + 0.9, V.z), { size: rnd(0.3, 0.45), vy: 0.45, life: 2.6 });
+    }
+  }
   if (croak) { F.noteT -= dt; if (F.noteT <= 0) { F.noteT = 0.45; floatText(Math.random() < 0.5 ? '♪' : '♫', ['#d94f8a', '#4f7fd9', '#e08a1e'][Math.floor(rnd(0, 3))], V2.set(V.x + rnd(-0.3, 0.3), V.y + 0.9, V.z), { size: 0.42, vy: 0.8, life: 1.8, drift: 0.5 }); } }
   if (swimming && (moving || anim === 'swim')) { F.ripT -= dt; if (F.ripT <= 0) { F.ripT = 0.7; ripple(F.x, F.z, 0.8); } }
 
@@ -705,8 +715,12 @@ function updateLabels() {
   const x = (V.x * 0.5 + 0.5) * innerWidth, y = (-V.y * 0.5 + 0.5) * innerHeight;
   tagEl.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, -100%)`;
   const f = snap.frog;
-  const text = f.say || (f.phase === 'thinking' ? '…' : '');
-  if (text !== bubbleText) { bubbleText = text; if (text) bubbleEl.textContent = text; bubbleEl.classList.toggle('think', !f.say); }
+  const kind = f.say ? 'say' : f.dream ? 'dream' : f.phase === 'thinking' ? 'think' : '';
+  const text = f.say || (f.dream ? '💭 ' + f.dream : '') || (f.phase === 'thinking' ? '…' : '');
+  if (text !== bubbleText) {
+    bubbleText = text; if (text) bubbleEl.textContent = text;
+    bubbleEl.classList.toggle('think', kind === 'think'); bubbleEl.classList.toggle('dream', kind === 'dream');
+  }
   bubbleEl.classList.toggle('show', !!text);
 }
 

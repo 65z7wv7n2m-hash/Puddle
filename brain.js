@@ -80,11 +80,14 @@ function routeAround(from, to) {
 }
 
 export class Brain {
-  constructor({ saved = null, decider = null, replier = null, browser = null, browseEveryHours = 3, realClock = false } = {}) {
+  constructor({ saved = null, decider = null, replier = null, browser = null, browseEveryHours = 3, dreamer = null, dreamEveryMinutes = 30, realClock = false } = {}) {
     this.decider = decider;   // optional async (brain) => { action, thought, say }
     this.replier = replier;   // optional async (brain, letters) => [reply, ...]
     this.browser = browser;   // optional async (brain) => { topic, learned, say }
     this.browseEveryMs = browseEveryHours * 3600 * 1000;
+    // Dreams: written by Claude if available (llm.js hangs a dream() function on the decider), else made up from memories.
+    this.dreamer = dreamer || decider?.dream || null;
+    this.dreamEveryMs = dreamEveryMinutes * 60 * 1000;
     this.realClock = realClock;
     this.pending = false;
     this.listeners = {};
@@ -92,6 +95,8 @@ export class Brain {
     this.s.discoveries ||= [];
     this.s.lastBrowseAt ??= 0;
     if (!this.s.discoveries.length) this.s.lastBrowseAt = 0; // never learned anything yet? go browse soon
+    this.s.dreams ||= [];
+    this.s.lastDreamAt ??= 0;
     const f = this.s.frog;
     if (!['travel', 'doing'].includes(f.phase) || !ACTIONS[f.action]) { f.phase = 'thinking'; f.timer = 2; }
   }
@@ -109,7 +114,7 @@ export class Brain {
       },
       lastAction: null, memories: [{ day: 1, time: '08:00', text: 'I woke up on my little island. Hello, world!' }],
       diary: [], friends: {}, mailbox: [], replies: [], letterId: 0, visitSeq: 0, lastVisit: null,
-      discoveries: [], lastBrowseAt: 0,
+      discoveries: [], lastBrowseAt: 0, dreams: [], lastDreamAt: 0,
       stats: { bugsEaten: 0, swims: 0, songs: 0, lettersRead: 0, naps: 0 },
     };
   }
@@ -292,6 +297,7 @@ export class Brain {
 
   start(name, thought, say) {
     const s = this.s, f = s.frog, a = ACTIONS[name];
+    if (f.action === 'nap' && f.dream) this.wakeUp();
     f.action = name; f.phase = 'travel'; f.count = 0; f.lickTimer = 1; f.wanderT = 0;
     f.thought = clean(thought || this.makeThought(name), 160);
     let p;
@@ -318,7 +324,7 @@ export class Brain {
     const f = this.s.frog, a = f.action, asleepSoon = a === 'nap';
     if (a === 'mail') return this.readMail();
     if (a === 'browse') return this.browse();
-    if (asleepSoon) { this.s.stats.naps++; return; }
+    if (asleepSoon) { this.s.stats.naps++; this.maybeDream(); return; }
     if (Math.random() < 0.55) {
       const lines = {
         eat: ['Bugs, bugs, bugs!', 'Hello, delicious.'],
@@ -369,7 +375,61 @@ export class Brain {
     if (a === 'swim') s.stats.swims++;
     if (a === 'sing') s.stats.songs++;
     if (mem) this.remember(mem);
+    if (a === 'nap') this.wakeUp();
     f.phase = 'thinking'; f.timer = rnd(1.5, 3.5); f.path = []; f.moving = false;
+  }
+
+  // ---------- dreams ----------
+  maybeDream() {
+    const s = this.s, f = s.frog;
+    f.dream = null;
+    if (Date.now() - (s.lastDreamAt || 0) < this.dreamEveryMs) return; // not every nap has a dream
+    s.lastDreamAt = Date.now();
+    const napId = (f.napId = (f.napId || 0) + 1);
+    const use = (text) => {
+      text = clean(text, 320);
+      if (!text) return;
+      if (!/^i dreamed/i.test(text)) text = 'I dreamed ' + text.charAt(0).toLowerCase() + text.slice(1);
+      if (f.napId !== napId) return this.saveDream(text); // he already woke up; still keep it
+      f.dream = text;
+    };
+    if (this.dreamer) {
+      Promise.resolve().then(() => this.dreamer(this)).then(
+        (t) => use(t || this.templateDream()),
+        (err) => { this.emit('error', err); use(this.templateDream()); },
+      );
+    } else use(this.templateDream());
+  }
+
+  wakeUp() {
+    const f = this.s.frog;
+    f.napId = (f.napId || 0) + 1;
+    if (!f.dream) return;
+    const dream = f.dream; f.dream = null;
+    this.saveDream(dream);
+    if (Math.random() < 0.6) this.say(pick(['I had the weirdest dream...', 'Whoa, what a dream.', 'I dreamed something so strange!', '*yawn* ...that dream was wild.']), 5);
+  }
+
+  saveDream(text) {
+    const s = this.s;
+    s.dreams.push({ day: s.day, time: timeStr(s.clock), text });
+    if (s.dreams.length > 30) s.dreams.shift();
+    this.remember(text);
+  }
+
+  templateDream() {
+    const s = this.s;
+    const friends = Object.keys(s.friends || {});
+    const topics = (s.discoveries || []).map((d) => d.topic);
+    const who = pick(friends.length ? friends : ['a giant beetle', 'the moon', 'a very polite owl', 'a cloud']);
+    const thing = pick(topics.length ? topics : ['trains made of lily pads', 'a sky full of fireflies', 'raindrops that tasted like flies', 'a pond as big as the ocean']);
+    return pick([
+      `I dreamed ${who} and I were floating on a lily pad through the stars, talking about ${thing}.`,
+      `I dreamed my pond turned into ${thing}, and I swam through it all night long.`,
+      `I dreamed I could jump all the way to the moon. ${who.charAt(0).toUpperCase() + who.slice(1)} was waiting there with a bug sandwich.`,
+      `I dreamed it rained for a hundred days and every raindrop sang a different song.`,
+      `I dreamed I was the size of my mushroom house and the bugs were the size of buses. Delicious buses.`,
+    ]);
   }
 
   changeWeather() {
@@ -476,6 +536,7 @@ export class Brain {
       `Mood: ${m.label}. Letters waiting in the mailbox: ${s.mailbox.length}. Last activity: ${s.lastAction || 'none'}.`,
       `Recent memories:\n${s.memories.slice(-12).map((x) => `- [day ${x.day} ${x.time}] ${x.text}`).join('\n')}`,
       `Diary notes:\n${s.diary.slice(-5).map((d) => `- ${d.text}`).join('\n') || '- (none yet)'}`,
+      `Recent dreams:\n${(s.dreams || []).slice(-3).map((d) => `- ${d.text}`).join('\n') || '- (none yet)'}`,
       `Things you have learned on the internet:\n${(s.discoveries || []).slice(-5).map((d) => `- ${d.topic}: ${d.learned}`).join('\n') || '- (nothing yet)'}`,
     ].join('\n');
   }
@@ -483,13 +544,15 @@ export class Brain {
   snapshot() {
     const s = this.s, f = s.frog, a = ACTIONS[f.action];
     const anim = f.phase === 'doing' ? a?.anim || 'sit' : f.phase === 'thinking' ? 'think' : 'hop';
-    const verb = f.phase === 'thinking' ? 'thinking about what to do' : f.phase === 'travel' ? (f.placeLabel === 'somewhere new' ? 'heading somewhere new' : `heading to ${f.placeLabel}`) : a?.verb || '';
+    const dreaming = f.action === 'nap' && f.phase === 'doing' && !!f.dream;
+    const verb = dreaming ? 'dreaming' : f.phase === 'thinking' ? 'thinking about what to do' : f.phase === 'travel' ? (f.placeLabel === 'somewhere new' ? 'heading somewhere new' : `heading to ${f.placeLabel}`) : a?.verb || '';
     return {
       name: FROG_NAME, t: s.t, clock: s.clock, time: timeStr(s.clock), day: s.day, night: this.isNight(), weather: s.weather,
       needs: { ...s.needs }, mood: this.mood(),
-      frog: { x: f.x, z: f.z, face: f.face, action: f.action, phase: f.phase, anim, verb, thought: f.thought, say: f.say, moving: f.moving, lick: f.lick },
+      frog: { x: f.x, z: f.z, face: f.face, action: f.action, phase: f.phase, anim, verb, thought: f.thought, say: f.say, moving: f.moving, lick: f.lick, dream: dreaming ? f.dream : null },
       memories: s.memories.slice(-60),
       discoveries: (s.discoveries || []).slice(-10),
+      dreams: (s.dreams || []).slice(-10),
       nextBrowseInMinutes: this.browser ? Math.max(0, Math.round(((s.lastBrowseAt || 0) + this.browseEveryMs - Date.now()) / 60000)) : null, diary: s.diary.slice(-10), replies: s.replies.slice(-10),
       mailbox: s.mailbox.length, stats: { ...s.stats }, lastVisit: s.lastVisit, llm: !!this.decider,
     };
