@@ -58,6 +58,31 @@
   #mem li.dream { background:linear-gradient(90deg,rgba(160,130,240,.22),transparent); margin:0 -6px; padding:7px 6px; border-radius:8px; font-style:italic; }
   #nametag { font-size:12px; font-weight:600; background:rgba(34,51,29,.7); color:white; padding:2px 9px; border-radius:99px; }
   #loading { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; font-size:20px; font-weight:600; color:white; text-shadow:0 2px 8px rgba(0,0,0,.25); pointer-events:none; }
+  #archive { position:fixed; inset:0; background:rgba(15,25,15,.38); display:flex; align-items:center; justify-content:center; z-index:20; }
+  .archive-card { width:min(880px,94vw); height:min(80vh,720px); display:flex; flex-direction:column; padding:16px 18px; background:rgba(255,255,255,.95); }
+  .archive-card h2 { margin:0; font-size:19px; }
+  .archive-card .sub { font-size:13px; color:var(--muted); margin-top:2px; }
+  .arch-body { flex:1; min-height:0; display:grid; grid-template-columns:190px 1fr; gap:14px; margin-top:12px; }
+  .arch-days { overflow:auto; display:flex; flex-direction:column; gap:4px; padding-right:4px; }
+  .arch-days button { text-align:left; border:none; background:transparent; font:inherit; font-size:14px; padding:8px 10px; border-radius:10px; cursor:pointer; color:var(--ink); display:flex; justify-content:space-between; gap:6px; }
+  .arch-days button:hover { background:var(--green2); }
+  .arch-days button.on { background:var(--green); color:white; }
+  .arch-days button small { opacity:.7; }
+  .arch-main { min-height:0; display:flex; flex-direction:column; }
+  #archSearch { font:inherit; font-size:14px; border:1px solid var(--line); border-radius:10px; padding:8px 11px; background:white; color:var(--ink); }
+  #archList { list-style:none; margin:8px 0 0; padding:0 6px 0 0; overflow:auto; font-size:14px; line-height:1.4; }
+  #archList li { padding:8px 0; border-top:1px solid var(--line); }
+  #archList li:first-child { border-top:none; }
+  #archList .when { display:block; font-size:11.5px; color:var(--muted); }
+  #archList li.reply { background:linear-gradient(90deg,rgba(255,214,102,.25),transparent); padding:8px 6px; border-radius:8px; }
+  #archList li.dream { background:linear-gradient(90deg,rgba(160,130,240,.22),transparent); padding:8px 6px; border-radius:8px; font-style:italic; }
+  #archList li.built { background:linear-gradient(90deg,rgba(91,179,61,.2),transparent); padding:8px 6px; border-radius:8px; }
+  #archList .empty { color:var(--muted); border:none; }
+  @media (max-width: 760px) {
+    .arch-body { grid-template-columns:1fr; grid-template-rows:auto 1fr; }
+    .arch-days { flex-direction:row; overflow-x:auto; padding-bottom:4px; }
+    .arch-days button { white-space:nowrap; }
+  }
   .hidden { display:none !important; }
   @media (max-width: 760px) {
     #top { width:auto; right:14px; padding:10px 12px; }
@@ -95,7 +120,7 @@
 </div>
 
 <div id="diaryCard" class="card">
-  <div class="row"><h2>📓 Puddle's diary</h2><button class="iconbtn" id="diaryClose" title="Hide diary">✕</button></div>
+  <div class="row"><h2>📓 Puddle's diary</h2><span><button class="iconbtn" id="archiveBtn" title="Full diary: every day he's ever lived">📜</button><button class="iconbtn" id="diaryClose" title="Hide diary">✕</button></span></div>
   <ul id="mem"></ul>
 </div>
 
@@ -112,6 +137,15 @@
   <button id="btnLetter">✉️ Letter</button>
   <button id="btnDiary" class="ghost">📓</button>
   <button id="btnFollow" class="ghost" title="Camera follows Puddle">🎥 <span class="lbl">Follow</span></button>
+</div>
+<div id="archive" class="hidden">
+  <div class="archive-card card" role="dialog" aria-label="Puddle's full diary">
+    <div class="row"><div><h2>📜 Puddle's full diary</h2><div class="sub" id="archSub">Every day he has lived, kept forever.</div></div><button class="iconbtn" id="archiveClose" title="Close">✕</button></div>
+    <div class="arch-body">
+      <div class="arch-days" id="archDays"></div>
+      <div class="arch-main"><input id="archSearch" placeholder="Search this day… (try “dreamed”, “built”, or a name)" autocomplete="off"><ul id="archList"></ul></div>
+    </div>
+  </div>
 </div>
 <div id="mode" class="card">🧠 Demo brain · runs in this tab</div>
 <div id="toast" class="card"></div>
@@ -717,6 +751,48 @@ $('diaryClose').onclick = () => {
   if (innerWidth > 760) { diary.classList.add('hidden'); $('btnDiary').style.display = 'inline-block'; }
   else diary.classList.remove('open');
 };
+// ---- full diary archive ----
+let archEntries = [], archDay = null;
+const entryClass = (t) => t.startsWith('Read a letter') ? 'reply' : t.startsWith('I dreamed') ? 'dream' : t.startsWith('Built a') ? 'built' : '';
+function renderArchive() {
+  const q = $('archSearch').value.trim().toLowerCase();
+  const list = archEntries.filter((e) => !q || e.text.toLowerCase().includes(q)).slice().reverse();
+  $('archList').innerHTML = list.length ? list.map((e) => {
+    const real = e.at ? new Date(e.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) + ' · ' : '';
+    return `<li class="${entryClass(e.text)}"><span class="when">${real}Day ${e.day} · ${e.time}</span>${esc(e.text)}</li>`;
+  }).join('') : `<li class="empty">${q ? 'Nothing matches that search on this day.' : 'Nothing written on this day.'}</li>`;
+}
+async function loadArchiveDay(date) {
+  archDay = date;
+  for (const b of $('archDays').querySelectorAll('button')) b.classList.toggle('on', b.dataset.date === date);
+  $('archList').innerHTML = '<li class="empty">Opening the diary…</li>';
+  try { archEntries = (await (await fetch('api/diary/day/' + date, { cache: 'no-store' })).json()).entries || []; }
+  catch { archEntries = []; }
+  renderArchive();
+}
+async function openArchive() {
+  $('archive').classList.remove('hidden'); $('archSearch').value = '';
+  if (!live) { // demo page: no server, so just show what he remembers right now
+    $('archSub').textContent = 'This demo only remembers recent days. On the live site, every day is kept forever.';
+    $('archDays').innerHTML = '<button class="on">Recent</button>';
+    archEntries = snap.memories.slice(); renderArchive(); return;
+  }
+  $('archDays').innerHTML = ''; $('archList').innerHTML = '<li class="empty">Opening the diary…</li>';
+  try {
+    const { days } = await (await fetch('api/diary/days', { cache: 'no-store' })).json();
+    const fmt = (d) => new Date(d + 'T12:00:00').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+    $('archSub').textContent = `${days.reduce((n, d) => n + d.count, 0)} entries over ${days.length} day${days.length === 1 ? '' : 's'}, kept forever.`;
+    $('archDays').innerHTML = days.map((d) => `<button data-date="${d.date}">${fmt(d.date)}<small>${d.count}</small></button>`).join('');
+    for (const b of $('archDays').querySelectorAll('button')) b.onclick = () => loadArchiveDay(b.dataset.date);
+    if (days.length) loadArchiveDay(days[0].date); else $('archList').innerHTML = '<li class="empty">No entries yet.</li>';
+  } catch { $('archList').innerHTML = '<li class="empty">Could not open the diary right now.</li>'; }
+}
+$('archiveBtn').onclick = openArchive;
+$('archiveClose').onclick = () => $('archive').classList.add('hidden');
+$('archive').onclick = (e) => { if (e.target.id === 'archive') $('archive').classList.add('hidden'); };
+addEventListener('keydown', (e) => { if (e.key === 'Escape') $('archive').classList.add('hidden'); });
+$('archSearch').oninput = renderArchive;
+
 let follow = true;
 $('btnFollow').onclick = () => { follow = !follow; $('btnFollow').innerHTML = follow ? '🎥 <span class="lbl">Follow</span>' : '🎥 <span class="lbl">Free cam</span>'; };
 

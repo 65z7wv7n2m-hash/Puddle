@@ -66,6 +66,27 @@ brain.on('memory', () => {
 brain.on('start', ({ action, thought }) => console.log(`[${timeStr(brain.s.clock)}] ${action}: ${thought}`));
 brain.on('memory', (m) => { if (m.text.startsWith('Looked up')) console.log('[browse]', m.text); });
 
+// ---------- the diary archive: every memory, forever, one file per real day ----------
+const ARCHIVE_DIR = path.join(DATA_DIR, 'diary');
+const TZ = process.env.TIMEZONE || 'America/Chicago';
+fs.mkdirSync(ARCHIVE_DIR, { recursive: true });
+const dateKey = (ms) => new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(ms); // 2026-10-30
+function archive(m, at = Date.now()) {
+  const line = JSON.stringify({ at, day: m.day, time: m.time, text: m.text }) + '\n';
+  fs.appendFile(path.join(ARCHIVE_DIR, dateKey(at) + '.jsonl'), line, (err) => err && console.error('[archive]', err.message));
+}
+if (!fs.readdirSync(ARCHIVE_DIR).length) { // first run: keep the memories he already has
+  const at = saved?.savedAt || Date.now();
+  for (const m of brain.s.memories) archive(m, at);
+}
+brain.on('memory', (m) => archive(m));
+function readDay(date) {
+  try {
+    return fs.readFileSync(path.join(ARCHIVE_DIR, date + '.jsonl'), 'utf8').split('\n').filter(Boolean)
+      .map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+  } catch { return []; }
+}
+
 // ---------- the heartbeat ----------
 let last = Date.now();
 setInterval(() => { const now = Date.now(); brain.tick(Math.min(1, (now - last) / 1000)); last = now; }, 100);
@@ -100,6 +121,15 @@ const server = http.createServer((req, res) => {
     return fs.readFile(PAGE, (err, buf) => err ? send(res, 500, 'Run "npm run build" first.', 'text/plain') : send(res, 200, buf.toString(), 'text/html; charset=utf-8'));
   }
   if (req.method === 'GET' && url.pathname === '/api/state') return send(res, 200, brain.snapshot());
+
+  // Diary archive: list of days, then the entries for one day.
+  if (req.method === 'GET' && url.pathname === '/api/diary/days') {
+    const days = fs.readdirSync(ARCHIVE_DIR).filter((f) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(f)).map((f) => f.slice(0, 10)).sort().reverse()
+      .map((date) => ({ date, count: fs.readFileSync(path.join(ARCHIVE_DIR, date + '.jsonl'), 'utf8').split('\n').filter(Boolean).length }));
+    return send(res, 200, { timezone: TZ, days });
+  }
+  const dayMatch = url.pathname.match(/^\/api\/diary\/day\/(\d{4}-\d{2}-\d{2})$/);
+  if (req.method === 'GET' && dayMatch) return send(res, 200, { date: dayMatch[1], entries: readDay(dayMatch[1]) });
 
   if (req.method === 'GET' && url.pathname === '/api/stream') {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive', 'x-accel-buffering': 'no' });
