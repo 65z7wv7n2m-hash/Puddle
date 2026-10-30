@@ -1,0 +1,11 @@
+{
+  "name": "puddle-the-frog",
+  "version": "1.0.0",
+  "description": "An autonomous frog who lives on the internet.",
+  "type": "module",
+  "scripts": {
+    "build": "node build.js",
+    "start": "node build.js && node server.js"
+  },
+  "engines": { "node": ">=18" }
+}
