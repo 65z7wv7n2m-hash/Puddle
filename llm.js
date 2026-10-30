@@ -62,9 +62,9 @@ You are at your mailbox reading these letters from visitors:
 
 ${list}
 
-Write a short reply to each one (one or two sentences, in character, address them by name).
+Write a reply to each one (two or three sentences, in character, address them by name).
 Reply with ONLY a JSON array of strings, one reply per letter, in the same order.`;
-    const out = parseJSON(await ask(PERSONA, prompt, 400));
+    const out = parseJSON(await ask(PERSONA, prompt, 900));
     return Array.isArray(out) ? out.map(String) : null;
   }
 

@@ -411,13 +411,13 @@ export class Brain {
     f.timer = Math.max(ACTIONS.mail.dur, letters.length * 8 + 4);
     const done = (replies) => {
       letters.forEach((L, i) => {
-        const reply = clean((replies && replies[i]) || this.templateReply(L), 200);
+        const reply = clean((replies && replies[i]) || this.templateReply(L), 400);
         s.replies.push({ name: L.name, text: L.text, reply, day: s.day, time: timeStr(s.clock) });
         if (s.replies.length > 30) s.replies.shift();
         (s.friends[L.name] ||= { letters: 0 }).letters++;
         s.stats.lettersRead++;
-        this.say(reply, 8);
-        this.remember(`Read a letter from ${L.name}: "${trim(L.text, 70)}" I replied: "${trim(reply, 70)}"`);
+        this.say(reply, Math.min(16, 6 + reply.length / 20));
+        this.remember(`Read a letter from ${L.name}: "${L.text}" I replied: "${reply}"`);
       });
     };
     if (this.replier) {
