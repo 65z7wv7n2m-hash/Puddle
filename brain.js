@@ -91,6 +91,7 @@ export class Brain {
     this.s = saved && saved.v === 1 ? saved : Brain.fresh();
     this.s.discoveries ||= [];
     this.s.lastBrowseAt ??= 0;
+    if (!this.s.discoveries.length) this.s.lastBrowseAt = 0; // never learned anything yet? go browse soon
     const f = this.s.frog;
     if (!['travel', 'doing'].includes(f.phase) || !ACTIONS[f.action]) { f.phase = 'thinking'; f.timer = 2; }
   }
@@ -271,7 +272,8 @@ export class Brain {
 
   decide() {
     // Every few hours curiosity wins: he goes and looks something up.
-    if (this.browseDue() && this.s.needs.energy > 15) { this.s.lastBrowseAt = Date.now(); return this.start('browse', this.makeThought('browse')); }
+    // (The 3-hour timer only restarts once he actually sits down and browses, so an interruption doesn't cost him his turn.)
+    if (this.browseDue() && this.s.needs.energy > 15) return this.start('browse', this.makeThought('browse'));
     const go = (d) => {
       let { action, thought, say } = d || {};
       if (!ACTIONS[action] || !this.allowedActions().includes(action)) {
@@ -486,7 +488,9 @@ export class Brain {
       name: FROG_NAME, t: s.t, clock: s.clock, time: timeStr(s.clock), day: s.day, night: this.isNight(), weather: s.weather,
       needs: { ...s.needs }, mood: this.mood(),
       frog: { x: f.x, z: f.z, face: f.face, action: f.action, phase: f.phase, anim, verb, thought: f.thought, say: f.say, moving: f.moving, lick: f.lick },
-      memories: s.memories.slice(-30), diary: s.diary.slice(-10), replies: s.replies.slice(-10),
+      memories: s.memories.slice(-60),
+      discoveries: (s.discoveries || []).slice(-10),
+      nextBrowseInMinutes: this.browser ? Math.max(0, Math.round(((s.lastBrowseAt || 0) + this.browseEveryMs - Date.now()) / 60000)) : null, diary: s.diary.slice(-10), replies: s.replies.slice(-10),
       mailbox: s.mailbox.length, stats: { ...s.stats }, lastVisit: s.lastVisit, llm: !!this.decider,
     };
   }
