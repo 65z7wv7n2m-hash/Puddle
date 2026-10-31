@@ -2,6 +2,7 @@
 // Only used by the server, and only when ANTHROPIC_API_KEY is set.
 
 import { ACTIONS, FROG_NAME } from './brain.js';
+import { makeSite } from './site.js';
 
 const PERSONA = `You are ${FROG_NAME}. You happen to be a small green frog living on a floating island
 (pond, mushroom house, meadow, mossy log, lookout rock, things you've built, and a mailbox where
@@ -149,6 +150,42 @@ Reply with ONLY JSON: {"item": "<one id from the list>", "why": "<one short firs
   }
 
   // The brain looks for dream() and build() here, so server.js doesn't need to change.
+  // ---- his own website (only if GITHUB_TOKEN and GITHUB_REPO are set) ----
+  const env = globalThis.process?.env || {};
+  const site = makeSite({ token: env.GITHUB_TOKEN, repo: env.GITHUB_REPO, islandUrl: env.RENDER_EXTERNAL_URL || env.ISLAND_URL || '', timezone: env.TIMEZONE || 'America/Chicago', log });
+  async function write(brain) {
+    const s = brain.s;
+    const titles = await site.recentTitles();
+    const prompt = `${brain.promptContext()}
+More things you've learned online: ${(s.discoveries || []).slice(-8).map((d) => `${d.topic}: ${d.learned}`).join(' | ') || 'none yet'}.
+Your recent posts (don't repeat these): ${titles.join(' | ') || 'none yet, this is your first post!'}
+
+You're writing a new post for your own personal website, in your own voice.
+Write about whatever is on your mind: one of your interests, something you learned and what you think about it,
+something you built, a dream, or a question you can't stop wondering about. Have opinions. Be specific.
+Don't quote or name the visitors who wrote you letters. Keep it family-friendly. No frog puns.
+
+Reply with ONLY JSON:
+{"title": "<a catchy title>", "summary": "<one sentence>", "paragraphs": ["<3 to 5 short paragraphs>"], "tags": ["<1-3 of your interests>"]}`;
+    const post = parseLastObject(await ask(PERSONA, prompt, 1000));
+    if (!post?.title || !Array.isArray(post.paragraphs) || !post.paragraphs.length) throw new Error('post came back empty');
+    post.title = String(post.title).slice(0, 120);
+    post.summary = String(post.summary || '').slice(0, 300);
+    post.paragraphs = post.paragraphs.map((x) => String(x).slice(0, 1500)).slice(0, 8);
+    post.tags = (post.tags || []).map((x) => String(x).slice(0, 30)).slice(0, 3);
+    const about = {
+      bio: `Hi, I'm Puddle. I live on a little floating island on the internet, where I swim, build things, read a lot, and write here about whatever I can't stop thinking about.`,
+      interests: brain.topInterests(6).map((x) => x.name),
+      built: (s.structures || []).filter((x) => x.progress >= 1).map((x) => x.label),
+    };
+    return { ...(await site.publish(post, about)), title: post.title };
+  }
+  if (site) {
+    decider.write = write;
+    decider.writeEveryHours = Number(env.POST_EVERY_HOURS) || 24;
+    decider.siteUrl = site.siteUrl;
+  }
+
   decider.dream = dream;
   // How often (minutes) Claude picks his next activity; the built-in rules handle the rest. Set DECIDE_EVERY_MINUTES to change.
   decider.everyMinutes = Number(globalThis.process?.env?.DECIDE_EVERY_MINUTES) || 15;

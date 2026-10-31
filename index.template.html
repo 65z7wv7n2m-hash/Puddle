@@ -19,6 +19,8 @@
   .doing { margin-top:6px; font-size:15px; font-weight:600; color:var(--green); }
   .thought { margin-top:3px; font-size:14px; color:var(--muted); font-style:italic; min-height:20px; }
   .interests { margin-top:6px; font-size:13px; color:var(--ink); }
+  .sitelink { display:inline-block; margin-top:7px; font-size:13.5px; font-weight:600; color:var(--green); text-decoration:none; }
+  .sitelink:hover { text-decoration:underline; }
   .interests span { display:inline-block; background:#fff4d6; border-radius:99px; padding:1px 8px; margin:2px 3px 0 0; }
   .needs { margin-top:10px; display:grid; gap:6px; }
   .need { display:grid; grid-template-columns:96px 1fr; align-items:center; gap:8px; font-size:13px; }
@@ -118,6 +120,7 @@
   <div id="doing" class="doing">waking up</div>
   <div id="thought" class="thought"></div>
   <div id="interests" class="interests hidden"></div>
+  <a id="siteLink" class="sitelink hidden" target="_blank" rel="noopener">🌐 Puddle's website</a>
   <div id="needs" class="needs"></div>
   <div class="meta"><span id="clock">08:00</span>·<span id="weather">☀️ Sunny</span>·<span>Day <span id="day">1</span></span></div>
 </div>
@@ -729,6 +732,8 @@ function updateHUD() {
   $('mood').textContent = `${snap.mood.emoji} ${snap.mood.label}`;
   $('doing').textContent = f.verb.charAt(0).toUpperCase() + f.verb.slice(1);
   $('thought').textContent = f.thought ? `“${f.thought}”` : '';
+  const web = snap.website?.home;
+  if (web && $('siteLink').getAttribute('href') !== web) { $('siteLink').href = web; $('siteLink').classList.remove('hidden'); }
   const ints = snap.interests || [], ik = ints.join('|');
   if ($('interests').dataset.k !== ik) {
     $('interests').dataset.k = ik;

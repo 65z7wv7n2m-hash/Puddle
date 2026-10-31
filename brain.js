@@ -77,6 +77,7 @@ export const ACTIONS = {
   gaze:    { place: 'rock',     jitter: 0,   dur: 26, anim: 'sit',    fx: { fun: 12, energy: 6 },                verb: 'watching the sky',       desc: 'Sit on the lookout rock and watch clouds (or stars at night).' },
   mail:    { place: 'mailbox',  jitter: 0,   dur: 16, anim: 'read',   fx: { social: 30, fun: 4 },                verb: 'reading his mail',       desc: 'Go to the mailbox, read letters from visitors and reply.' },
   dance:   { place: 'clearing', jitter: 0.6, dur: 20, anim: 'dance',  fx: { fun: 28, moisture: 20, social: 5 },  verb: 'dancing in the rain',    desc: 'Rain dance in the clearing. Only possible while it is raining.' },
+  write:   { place: 'log',      jitter: 0,   dur: 35, anim: 'read',   fx: { fun: 20, social: 12 },               verb: 'writing a post for his website', desc: 'Write a post for your website.' },
   use:     { place: 'thing',    jitter: 0,   dur: 25, anim: 'sit',    fx: {},                                    verb: 'playing',                desc: 'Use something you built.' },
   build:   { place: 'plot',     jitter: 0,   dur: 40, anim: 'build',  fx: { fun: 30, energy: -12, hunger: -4 },  verb: 'building something',     desc: 'Build something new on the empty land around the edge of your island.' },
   browse:  { place: 'log',      jitter: 0,   dur: 30, anim: 'read',   fx: { fun: 22, social: 4 },                verb: 'browsing the internet',  desc: 'Sit on the mossy log and look something up on the internet.' },
@@ -135,6 +136,9 @@ export class Brain {
     // To keep costs down, Claude picks his next activity at most this often; in between, the built-in rules do.
     this.decideEveryMs = (decider?.everyMinutes ?? 15) * 60 * 1000;
     this.lastClaudeDecision = 0;
+    // His website: llm.js hangs write() on the decider when GitHub is set up.
+    this.writer = decider?.write || null;
+    this.writeEveryMs = (decider?.writeEveryHours ?? 24) * 3600 * 1000;
     // Building: Claude picks what to build (llm.js hangs build() on the decider), otherwise he picks himself.
     this.builder = builder || decider?.build || null;
     this.buildEveryMs = buildEveryMinutes * 60 * 1000;
@@ -143,6 +147,9 @@ export class Brain {
     this.listeners = {};
     this.s = saved && saved.v === 1 ? saved : Brain.fresh();
     this.s.discoveries ||= [];
+    this.s.lastPostAt ??= 0;
+    this.s.website ||= decider?.siteUrl ? { home: decider.siteUrl } : null;
+    if (this.s.website && decider?.siteUrl) this.s.website.home = decider.siteUrl;
     this.s.interests ||= [];   // things he's gotten into, growing stronger the more he explores them
     this.s.curiosities ||= []; // follow-up questions he wants to look into next time
     this.s.lastBrowseAt ??= 0;
@@ -332,9 +339,10 @@ export class Brain {
     if (this.unfinished()) return true; // always allowed to go finish a half-built thing
     return !!this.freePlot() && Date.now() - (this.s.lastBuildAt || 0) >= this.buildEveryMs && !this.isNight();
   }
+  writeDue() { return !!this.writer && Date.now() - (this.s.lastPostAt || 0) >= this.writeEveryMs && !this.isNight(); }
   browseDue() { return !!this.browser && Date.now() - (this.s.lastBrowseAt || 0) >= this.browseEveryMs; }
   allowedActions() {
-    return Object.keys(ACTIONS).filter((k) => (k !== 'dance' || this.s.weather === 'rain') && (k !== 'browse' || this.browseDue()) && (k !== 'build' || this.canBuild()) && (k !== 'use' || this.finishedThings().length > 0));
+    return Object.keys(ACTIONS).filter((k) => (k !== 'dance' || this.s.weather === 'rain') && (k !== 'browse' || this.browseDue()) && (k !== 'build' || this.canBuild()) && (k !== 'use' || this.finishedThings().length > 0) && k !== 'write');
   }
 
   scores() {
@@ -380,6 +388,8 @@ export class Brain {
     // Every few hours curiosity wins: he goes and looks something up.
     // (The 3-hour timer only restarts once he actually sits down and browses, so an interruption doesn't cost him his turn.)
     if (this.browseDue() && this.s.needs.energy > 15) return this.start('browse', this.makeThought('browse'));
+    // Once a day he sits down and writes a post for his website.
+    if (this.writeDue() && this.s.needs.energy > 20) return this.start('write', pick(['I have something I want to write about.', 'Time to update my website!', 'I keep thinking about something. Writing it down.']));
     const go = (d) => {
       let { action, thought, say, target } = d || {};
       if (!ACTIONS[action] || !this.allowedActions().includes(action)) {
@@ -443,6 +453,7 @@ export class Brain {
     if (a === 'browse') return this.browse();
     if (a === 'build') return this.beginBuild();
     if (a === 'use') return this.beginUse();
+    if (a === 'write') return this.writePost();
     if (asleepSoon) { this.s.stats.naps++; this.maybeDream(); return; }
     if (Math.random() < 0.55) {
       const lines = {
@@ -498,6 +509,7 @@ export class Brain {
       browse: null,
       build: null,
       use: null,
+      write: null,
     }[a];
     if (a === 'build') this.finishBuild();
     if (a === 'use') this.finishUse();
@@ -709,6 +721,30 @@ export class Brain {
     });
   }
 
+  writePost() {
+    const s = this.s, f = s.frog;
+    s.lastPostAt = Date.now(); // even if it fails, wait until next time rather than retrying all day
+    this.say(pick(['Okay. Deep breath. Writing...', '*types thoughtfully*', 'Let me get my thoughts down...']), 4);
+    this.replying = true;
+    Promise.resolve().then(() => this.writer(this)).then(
+      (r) => {
+        this.replying = false;
+        if (!r?.title) throw new Error('no post');
+        s.website = { home: r.home, lastTitle: r.title, lastUrl: r.url };
+        s.stats.posts = (s.stats.posts || 0) + 1;
+        f.thought = clean(`I just posted "${r.title}" on my website!`, 160);
+        this.say(clean(`New post on my website: "${r.title}"`, 160), 8);
+        this.remember(`Wrote a post on my website: "${clean(r.title, 120)}".`);
+        f.timer = Math.max(f.timer, 6);
+      },
+    ).catch((err) => {
+      this.replying = false;
+      this.emit('error', err);
+      this.say("Hmm, my website wouldn't save. I'll try again tomorrow.", 5);
+      this.remember('Tried to write a post for my website, but it would not publish.');
+    });
+  }
+
   growInterest(name) {
     const s = this.s, key = clean(name, 40).toLowerCase();
     if (!key) return;
@@ -762,6 +798,7 @@ export class Brain {
       memories: s.memories.slice(-60),
       discoveries: (s.discoveries || []).slice(-10),
       interests: this.topInterests(5).map((x) => x.name),
+      website: s.website || null,
       dreams: (s.dreams || []).slice(-10),
       structures: (s.structures || []).map(({ id, item, label, x, z, rot, progress }) => ({ id, item, label, x, z, rot, progress })),
       nextBrowseInMinutes: this.browser ? Math.max(0, Math.round(((s.lastBrowseAt || 0) + this.browseEveryMs - Date.now()) / 60000)) : null, diary: s.diary.slice(-10), replies: s.replies.slice(-10),
