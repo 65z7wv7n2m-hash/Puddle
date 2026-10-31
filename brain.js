@@ -83,13 +83,13 @@ export const ACTIONS = {
 };
 
 const THOUGHTS = {
-  eat:     ['My tummy is rumbling. Bug hunt time!', "I can hear the meadow buzzing. Snack o'clock.", 'Thinking about crunchy beetles... to the meadow!', 'A frog cannot live on vibes alone. Bugs, please.'],
+  eat:     ['My tummy is rumbling. Bug hunt time!', "I can hear the meadow buzzing. Snack o'clock.", 'Thinking about crunchy beetles... to the meadow!', 'Snack break.'],
   nap:     ['My eyelids are so heavy. Nap time.', 'The mushroom house is calling my name.', 'A little nap never hurt a frog.'],
   napNight:['It is dark out. Time for bed.', 'Goodnight, pond. Goodnight, stars.', 'Sleepy frog hours have begun.'],
   swim:    ['My skin feels dry. Splash time!', 'The pond looks perfect right now.', 'Gotta stay slippery. Swimming!'],
   lilypad: ['I will just float on my lily pad for a bit.', 'Lily pad lounging. Very important frog business.', 'My favorite lily pad misses me.'],
   sing:    ['I feel a song coming on. Ribbit!', 'The mossy log has the best acoustics.', 'Time to croak my heart out.'],
-  singNight:['Night croak concert, starring me.', 'Frogs sing at night. It is the law.'],
+  singNight:['Night concert, starring me.', 'Something about the night makes me want to sing.'],
   explore: ['I wonder what is over there...', 'Adventure time! Let me see what is new on the island.', 'Feeling curious. Going for a hop.'],
   gaze:    ['That cloud looks like a fly. Better go look closer.', 'Going to watch the clouds from the lookout rock.'],
   gazeNight:['The stars are so bright tonight. To the rock!', 'I want to count the stars again. I got to 12 last time.'],
@@ -124,7 +124,7 @@ function routeAround(from, to) {
 }
 
 export class Brain {
-  constructor({ saved = null, decider = null, replier = null, browser = null, browseEveryHours = 3, dreamer = null, dreamEveryMinutes = 30, builder = null, buildEveryMinutes = 60, realClock = false } = {}) {
+  constructor({ saved = null, decider = null, replier = null, browser = null, browseEveryHours = 3, dreamer = null, dreamEveryMinutes = 60, builder = null, buildEveryMinutes = 60, realClock = false } = {}) {
     this.decider = decider;   // optional async (brain) => { action, thought, say }
     this.replier = replier;   // optional async (brain, letters) => [reply, ...]
     this.browser = browser;   // optional async (brain) => { topic, learned, say }
@@ -132,6 +132,9 @@ export class Brain {
     // Dreams: written by Claude if available (llm.js hangs a dream() function on the decider), else made up from memories.
     this.dreamer = dreamer || decider?.dream || null;
     this.dreamEveryMs = dreamEveryMinutes * 60 * 1000;
+    // To keep costs down, Claude picks his next activity at most this often; in between, the built-in rules do.
+    this.decideEveryMs = (decider?.everyMinutes ?? 15) * 60 * 1000;
+    this.lastClaudeDecision = 0;
     // Building: Claude picks what to build (llm.js hangs build() on the decider), otherwise he picks himself.
     this.builder = builder || decider?.build || null;
     this.buildEveryMs = buildEveryMinutes * 60 * 1000;
@@ -140,6 +143,8 @@ export class Brain {
     this.listeners = {};
     this.s = saved && saved.v === 1 ? saved : Brain.fresh();
     this.s.discoveries ||= [];
+    this.s.interests ||= [];   // things he's gotten into, growing stronger the more he explores them
+    this.s.curiosities ||= []; // follow-up questions he wants to look into next time
     this.s.lastBrowseAt ??= 0;
     if (!this.s.discoveries.length) this.s.lastBrowseAt = 0; // never learned anything yet? go browse soon
     this.s.dreams ||= [];
@@ -163,7 +168,7 @@ export class Brain {
       },
       lastAction: null, memories: [{ day: 1, time: '08:00', text: 'I woke up on my little island. Hello, world!' }],
       diary: [], friends: {}, mailbox: [], replies: [], letterId: 0, visitSeq: 0, lastVisit: null,
-      discoveries: [], lastBrowseAt: 0, dreams: [], lastDreamAt: 0, structures: [], lastBuildAt: 0,
+      discoveries: [], interests: [], curiosities: [], lastBrowseAt: 0, dreams: [], lastDreamAt: 0, structures: [], lastBuildAt: 0,
       stats: { bugsEaten: 0, swims: 0, songs: 0, lettersRead: 0, naps: 0 },
     };
   }
@@ -382,7 +387,10 @@ export class Brain {
       }
       this.start(action, thought, say, target);
     };
-    if (this.decider) {
+    const now = Date.now();
+    const claudeTurn = this.decider && now - this.lastClaudeDecision >= this.decideEveryMs && !(this.isNight() && this.s.needs.energy < 40);
+    if (claudeTurn) {
+      this.lastClaudeDecision = now;
       this.pending = true;
       Promise.resolve().then(() => this.decider(this)).then(
         (d) => { this.pending = false; go(d); },
@@ -683,6 +691,9 @@ export class Brain {
         this.replying = false;
         if (!r || !r.topic) throw new Error('no result');
         const topic = clean(r.topic, 80), learned = clean(r.learned, 240);
+        this.growInterest(r.interest || topic);
+        if (r.next) { s.curiosities.push(clean(r.next, 140)); s.curiosities = s.curiosities.slice(-6); }
+        if (r.answered) s.curiosities = s.curiosities.filter((q) => q !== r.answered);
         f.thought = clean(`I looked up ${topic}!`, 160);
         this.say(clean(r.say || learned, 160), 8);
         s.discoveries.push({ day: s.day, time: timeStr(s.clock), topic, learned });
@@ -698,15 +709,26 @@ export class Brain {
     });
   }
 
+  growInterest(name) {
+    const s = this.s, key = clean(name, 40).toLowerCase();
+    if (!key) return;
+    for (const it of s.interests) if (it.name !== key) it.strength = Math.max(0, +(it.strength * 0.97).toFixed(2)); // old interests fade slowly
+    const it = s.interests.find((x) => x.name === key);
+    if (it) { it.strength = Math.min(10, +(it.strength + 1).toFixed(2)); it.last = s.day; }
+    else s.interests.push({ name: key, strength: 1, since: s.day, last: s.day });
+    s.interests = s.interests.filter((x) => x.strength >= 0.3).sort((a, b) => b.strength - a.strength).slice(0, 12);
+  }
+  topInterests(n = 5) { return (this.s.interests || []).slice().sort((a, b) => b.strength - a.strength).slice(0, n); }
+
   templateReply(L) {
     const t = L.text.toLowerCase(), n = L.name, again = (this.s.friends[n]?.letters || 0) > 0;
     if (/\b(bug|bugs|fly|flies|snack|food|eat)\b/.test(t)) return pick([`Did someone say bugs? ${n}, you get me.`, `${n}, my tummy says thank you for thinking of snacks.`]);
     if (/\brain\b/.test(t)) return `${n}, rain is the best weather. I'm going to dance in the next one!`;
-    if (/\b(song|sing|music)\b/.test(t)) return `${n}, I'll croak a song just for you tonight. Ribbit!`;
-    if (t.includes('?')) return pick([`Hmm, good question, ${n}. I'll think about it on my lily pad.`, `${n}, I'm just a frog, but I think... yes? Maybe? Ribbit.`]);
+    if (/\b(song|sing|music)\b/.test(t)) return `${n}, I'll sing one just for you tonight.`;
+    if (t.includes('?')) return pick([`Hmm, good question, ${n}. I'll think about it on my lily pad.`, `${n}, I think... yes? Maybe? I'll get back to you.`]);
     if (/\b(hi|hello|hey|yo|sup|howdy)\b/.test(t)) return again ? `${n}! You came back! Hi again!` : `Hi ${n}! Welcome to my pond!`;
     if (/\b(love|cute|nice|cool|awesome|best)\b/.test(t)) return `Aww, ${n}. You're making my cheeks pink.`;
-    return pick([`Thank you for the letter, ${n}! I'll keep it in my mushroom house.`, `${n}, I read every word. Twice. Ribbit!`, `Got it, ${n}! Writing that in my diary.`]);
+    return pick([`Thank you for the letter, ${n}! I'll keep it in my mushroom house.`, `${n}, I read every word. Twice!`, `Got it, ${n}! Writing that in my diary.`]);
   }
 
   // ---------- for the AI prompt and for web pages ----------
@@ -716,7 +738,9 @@ export class Brain {
       `Time: day ${s.day}, ${timeStr(s.clock)} (${this.isNight() ? 'night' : 'daytime'}). Weather: ${s.weather}.`,
       `Needs (0 = desperate, 100 = fully satisfied): ${NEEDS.map((k) => `${k} ${Math.round(s.needs[k])}`).join(', ')}.`,
       `Mood: ${m.label}. Letters waiting in the mailbox: ${s.mailbox.length}. Last activity: ${s.lastAction || 'none'}.`,
-      `Recent memories:\n${s.memories.slice(-12).map((x) => `- [day ${x.day} ${x.time}] ${x.text}`).join('\n')}`,
+      `Your interests (strongest first): ${this.topInterests(6).map((x) => `${x.name} (${x.strength.toFixed(1)})`).join(', ') || 'none yet, you are still finding them'}.`,
+      `Questions you want to look into: ${(s.curiosities || []).slice(-4).join(' | ') || 'none yet'}.`,
+      `Recent memories:\n${s.memories.slice(-10).map((x) => `- [day ${x.day} ${x.time}] ${x.text}`).join('\n')}`,
       `Diary notes:\n${s.diary.slice(-5).map((d) => `- ${d.text}`).join('\n') || '- (none yet)'}`,
       `Things you have built on your island: ${(s.structures || []).filter((x) => x.progress >= 1).map((x) => x.label).join(', ') || 'nothing yet'}.`,
       `Recent dreams:\n${(s.dreams || []).slice(-3).map((d) => `- ${d.text}`).join('\n') || '- (none yet)'}`,
@@ -737,6 +761,7 @@ export class Brain {
       frog: { x: f.x, z: f.z, face: f.face, action: f.action, phase: f.phase, anim, verb, thought: f.thought, say: f.say, moving: f.moving, lick: f.lick, dream: dreaming ? f.dream : null, useId: f.action === 'use' ? f.useId : null },
       memories: s.memories.slice(-60),
       discoveries: (s.discoveries || []).slice(-10),
+      interests: this.topInterests(5).map((x) => x.name),
       dreams: (s.dreams || []).slice(-10),
       structures: (s.structures || []).map(({ id, item, label, x, z, rot, progress }) => ({ id, item, label, x, z, rot, progress })),
       nextBrowseInMinutes: this.browser ? Math.max(0, Math.round(((s.lastBrowseAt || 0) + this.browseEveryMs - Date.now()) / 60000)) : null, diary: s.diary.slice(-10), replies: s.replies.slice(-10),

@@ -18,6 +18,8 @@
   .mood { font-size:14px; font-weight:500; background:var(--green2); padding:3px 10px; border-radius:99px; white-space:nowrap; }
   .doing { margin-top:6px; font-size:15px; font-weight:600; color:var(--green); }
   .thought { margin-top:3px; font-size:14px; color:var(--muted); font-style:italic; min-height:20px; }
+  .interests { margin-top:6px; font-size:13px; color:var(--ink); }
+  .interests span { display:inline-block; background:#fff4d6; border-radius:99px; padding:1px 8px; margin:2px 3px 0 0; }
   .needs { margin-top:10px; display:grid; gap:6px; }
   .need { display:grid; grid-template-columns:96px 1fr; align-items:center; gap:8px; font-size:13px; }
   .bar { height:9px; border-radius:99px; background:rgba(34,51,29,.10); overflow:hidden; }
@@ -115,6 +117,7 @@
   <div class="row"><div class="name">🐸 Puddle</div><div id="mood" class="mood">🙂 content</div></div>
   <div id="doing" class="doing">waking up</div>
   <div id="thought" class="thought"></div>
+  <div id="interests" class="interests hidden"></div>
   <div id="needs" class="needs"></div>
   <div class="meta"><span id="clock">08:00</span>·<span id="weather">☀️ Sunny</span>·<span>Day <span id="day">1</span></span></div>
 </div>
@@ -726,6 +729,12 @@ function updateHUD() {
   $('mood').textContent = `${snap.mood.emoji} ${snap.mood.label}`;
   $('doing').textContent = f.verb.charAt(0).toUpperCase() + f.verb.slice(1);
   $('thought').textContent = f.thought ? `“${f.thought}”` : '';
+  const ints = snap.interests || [], ik = ints.join('|');
+  if ($('interests').dataset.k !== ik) {
+    $('interests').dataset.k = ik;
+    $('interests').innerHTML = ints.length ? '💡 Into: ' + ints.map((x) => `<span>${esc(x)}</span>`).join('') : '';
+    $('interests').classList.toggle('hidden', !ints.length);
+  }
   for (const k of NEEDS) {
     const v = snap.needs[k], el = $('n-' + k);
     el.style.width = v.toFixed(1) + '%';
